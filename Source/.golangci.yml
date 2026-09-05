@@ -1,0 +1,45 @@
+# Конфигурация golangci-lint v2. Запускать из каталога Source:
+#   golangci-lint run ./core/... ./cmd/torproxy/...
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - depguard
+
+  settings:
+    depguard:
+      rules:
+        # Граница модуля из ЛОГИКА.md, раздел 3: ядро ничего не знает
+        # ни о UI, ни о способах доставки. Дублируется тестом
+        # core/arch_test.go — тест ловит нарушение и без линтера.
+        ядро-не-знает-о-верхних-слоях:
+          files:
+            - "**/core/**"
+          deny:
+            - pkg: gitlab.com/vkandreevich/torlocalproxy/cmd
+              desc: ядро не знает о командной строке
+            - pkg: gitlab.com/vkandreevich/torlocalproxy/desktop
+              desc: ядро не знает о графическом интерфейсе
+            - pkg: gitlab.com/vkandreevich/torlocalproxy/android
+              desc: ядро не знает об Android
+            - pkg: gitlab.com/vkandreevich/torlocalproxy/ios
+              desc: ядро не знает об iOS
+
+  exclusions:
+    generated: lax
+    paths:
+      - Prototype-Python
+      - testdata
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - Prototype-Python
+      - testdata

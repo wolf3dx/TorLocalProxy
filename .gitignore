@@ -22,8 +22,8 @@ __pycache__/
 venv/
 
 # Go
-/bin/
-/dist/
+bin/
+dist/
 *.test
 *.out
 vendor/

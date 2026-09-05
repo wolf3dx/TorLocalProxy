@@ -1,0 +1,74 @@
+# CI этапа 0. Код Go живёт в Source/, поэтому каждое задание туда переходит.
+# Модулей два (core и cmd/torproxy), они объединены go.work; шаблон ./...
+# из корня рабочего пространства не раскрывается, отсюда явный список PKGS.
+
+stages:
+  - check
+  - build
+
+variables:
+  GO_IMAGE: golang:1.24
+  GOPATH: $CI_PROJECT_DIR/.cache/gopath
+  GOCACHE: $CI_PROJECT_DIR/.cache/gobuild
+  PKGS: "./core/... ./cmd/torproxy/..."
+
+.go:
+  image: $GO_IMAGE
+  before_script:
+    - cd Source
+  cache:
+    key: go-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cache/gopath/pkg/mod
+      - .cache/gobuild
+
+# Тесты не требуют ни сети, ни установленного tor — правило 5.1 плана.
+# Всё, что требует, помечается тегом сборки integration и здесь не идёт.
+тесты:
+  extends: .go
+  stage: check
+  script:
+    - go vet $PKGS
+    - go test -count=1 $PKGS
+
+формат:
+  extends: .go
+  stage: check
+  script:
+    - test -z "$(gofmt -l core cmd)" || { echo 'gofmt изменил бы файлы:'; gofmt -l core cmd; exit 1; }
+
+линтер:
+  extends: .go
+  stage: check
+  image: golangci/golangci-lint:v2.6.2
+  script:
+    - golangci-lint run $PKGS
+
+# Кросс-компиляция вместо родных раннеров: пока в проекте нет cgo,
+# она честно проверяет все четыре десктопные цели. Родные раннеры
+# понадобятся на этапе 8, когда появится go-libtor.
+сборка:
+  extends: .go
+  stage: build
+  script:
+    - mkdir -p dist
+    - if [ "$GOOS" = "windows" ]; then SUFFIX=".exe"; else SUFFIX=""; fi
+    - >-
+      go build -trimpath
+      -ldflags "-s -w -X gitlab.com/vkandreevich/torlocalproxy/core.Version=$CI_COMMIT_REF_NAME -X gitlab.com/vkandreevich/torlocalproxy/core.Commit=$CI_COMMIT_SHORT_SHA"
+      -o "dist/torproxy-$GOOS-$GOARCH$SUFFIX" ./cmd/torproxy
+  parallel:
+    matrix:
+      - GOOS: windows
+        GOARCH: amd64
+      - GOOS: linux
+        GOARCH: amd64
+      - GOOS: darwin
+        GOARCH: amd64
+      - GOOS: darwin
+        GOARCH: arm64
+  artifacts:
+    name: torproxy-$CI_COMMIT_SHORT_SHA
+    paths:
+      - Source/dist/
+    expire_in: 1 week
