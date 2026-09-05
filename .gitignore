@@ -1,0 +1,58 @@
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Temp
+*.tmp
+~$*
+
+# Python (прототип)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Go
+/bin/
+/dist/
+*.test
+*.out
+vendor/
+
+# Мобильные сборки
+/android/build/
+/android/.gradle/
+/android/local.properties
+/ios/build/
+/ios/Pods/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+# Артефакты gomobile
+*.aar
+*.xcframework/
+*.framework/
+
+# Секреты и подпись — в git не попадают никогда
+Token.txt
+*.p12
+*.keystore
+*.jks
+*.mobileprovision
+*.cer
+signing.env
+
+# Состояние Tor во время отладки
+torrc
+tor.log
+control_port
+control_auth_cookie

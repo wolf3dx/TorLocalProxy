@@ -1,0 +1,60 @@
+# Переводы строк задаёт репозиторий, а не настройка core.autocrlf на машине.
+* text=auto
+
+# Скрипты
+*.sh      text eol=lf
+*.command text eol=lf
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# Исходники
+*.go      text eol=lf
+go.mod    text eol=lf
+go.sum    text eol=lf
+*.py      text eol=lf
+*.swift   text eol=lf
+*.kt      text eol=lf
+*.gradle  text eol=lf
+*.md      text
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.json    text eol=lf
+*.toml    text eol=lf
+torrc     text eol=lf
+
+# Транскрипты сессий переносятся побайтово
+*.jsonl   -text
+
+# Двоичные
+*.exe   binary
+*.dll   binary
+*.pdb   binary
+*.so    binary
+*.dylib binary
+*.a     binary
+*.aar   binary
+*.jar   binary
+*.apk   binary
+*.aab   binary
+*.ipa   binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.icns  binary
+*.zip   binary
+*.7z    binary
+*.gz    binary
+*.dmg   binary
+*.pyc   binary
+
+# Собранные бинарники Go под Linux и macOS идут без расширения —
+# без этих масок git примет их за текст и испортит содержимое.
+torproxy        binary
+torproxy-*      binary
+tor             binary
+lyrebird        binary
+snowflake-client binary
+webtunnel-client binary
