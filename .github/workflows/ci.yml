@@ -1,0 +1,122 @@
+name: CI
+
+# Родная матрица ОС: GitHub даёт раннеры Linux, Windows и macOS, которых нет
+# у GitLab на бесплатном тарифе. Пока в проекте нет cgo, разница невелика —
+# но с этапа 8 (go-libtor) собрать под каждую ОС можно только на ней самой,
+# и матрица должна быть отлажена заранее, а не в тот момент, когда она
+# внезапно понадобится.
+#
+# Разделение с GitLab: там основной репозиторий и быстрые проверки на Linux,
+# здесь — тесты на трёх ОС и бинарники под все десктопные цели.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Source/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+  # Модулей два, объединены go.work; шаблон ./... из корня рабочего
+  # пространства не раскрывается, отсюда явный список.
+  PKGS: ./core/... ./cmd/torproxy/...
+
+jobs:
+  tests:
+    name: Тесты (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: Source/**/go.sum
+
+      # Ни сети, ни установленного tor тесты не требуют: всё, что требует,
+      # живёт за тегом сборки integration (PLAN.md, раздел 5.1).
+      - name: go vet
+        working-directory: Source
+        run: go vet ${{ env.PKGS }}
+
+      - name: go test
+        working-directory: Source
+        run: go test -count=1 ${{ env.PKGS }}
+
+  lint:
+    name: Формат и линтер
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: Source/**/go.sum
+
+      - name: gofmt
+        working-directory: Source
+        run: |
+          if [ -n "$(gofmt -l core cmd)" ]; then
+            echo 'gofmt изменил бы файлы:'
+            gofmt -l core cmd
+            exit 1
+          fi
+
+      # Правило depguard в Source/.golangci.yml сторожит границу ядра:
+      # core не знает о cmd, desktop, android и ios (ЛОГИКА.md, раздел 3).
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.6.2
+          working-directory: Source
+          args: ${{ env.PKGS }}
+
+  build:
+    name: Сборка ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  goos: linux,   goarch: amd64, ext: '' }
+          - { os: windows-latest, goos: windows, goarch: amd64, ext: '.exe' }
+          - { os: macos-14,       goos: darwin,  goarch: arm64, ext: '' }
+          # Intel-раннеры GitHub на практике не берутся в работу и висят в
+          # очереди до отмены, поэтому darwin/amd64 собирается тут же, на
+          # arm64-машине. Xcode несёт SDK обеих архитектур, так что это
+          # переживёт и появление cgo на этапе 8.
+          - { os: macos-14,       goos: darwin,  goarch: amd64, ext: '' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: Source/**/go.sum
+
+      - name: go build
+        working-directory: Source
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X gitlab.com/vkandreevich/torlocalproxy/core.Version=${GITHUB_REF_NAME} -X gitlab.com/vkandreevich/torlocalproxy/core.Commit=$(git rev-parse --short HEAD)" \
+            -o "dist/torproxy-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" ./cmd/torproxy
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: torproxy-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: Source/dist/*
+          retention-days: 14
