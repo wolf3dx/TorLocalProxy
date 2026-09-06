@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -31,6 +32,12 @@ import (
 // На Android от него зависит каталог, куда лягут состояние tor и мосты.
 const ИдПриложения = "com.vkandreevich.torlocalproxy"
 
+// ПортProxy — порт локального прокси. Он постоянный, а не выбирается
+// системой: адрес вписывают в настройки других программ один раз, и он
+// не должен меняться от запуска к запуску. 9050 — тот же порт, что у
+// Tor Browser и у Orbot, его же ожидают готовые инструкции в интернете.
+const ПортProxy = 9050
+
 func main() {
 	приложение := app.NewWithID(ИдПриложения)
 	приложение.Settings().SetTheme(theme.DarkTheme())
@@ -40,8 +47,9 @@ func main() {
 
 	каталог := каталогСостояния(приложение)
 	служба, err := service.New(service.Options{
-		StateDir: каталог,
-		Runtime:  создатьЗапускTor(каталог),
+		StateDir:  каталог,
+		SocksPort: ПортProxy,
+		Runtime:   создатьЗапускTor(каталог),
 	})
 	if err != nil {
 		окно.SetContent(widget.NewLabel("Не удалось подготовить приложение:\n" + err.Error()))
@@ -247,8 +255,14 @@ func (н наблюдатель) OnState(state string) {
 	})
 }
 
-// показатьЖурнал открывает окно с накопленными строками — та самая
-// кнопка «понять, что не так».
+// показатьЖурнал открывает журнал — ту самую кнопку «понять, что не
+// так».
+//
+// Текст выводится одной меткой в прокрутке, а не списком. Список здесь
+// уже стоил падения: его ScrollToBottom обращается к внутренней
+// прокрутке, которой до отрисовки виджета не существует, и приложение
+// уходило в nil pointer dereference, унося с собой tor. Прокрутка
+// сдвигается только после того, как окно показано.
 func показатьЖурнал(окно fyne.Window, служба *service.Service) {
 	строки := служба.Log()
 	if len(строки) == 0 {
@@ -256,24 +270,23 @@ func показатьЖурнал(окно fyne.Window, служба *service.Se
 		return
 	}
 
-	список := widget.NewList(
-		func() int { return len(строки) },
-		func() fyne.CanvasObject {
-			метка := widget.NewLabel("")
-			метка.TextStyle = fyne.TextStyle{Monospace: true}
-			метка.Wrapping = fyne.TextWrapWord
-			return метка
-		},
-		func(i widget.ListItemID, объект fyne.CanvasObject) {
-			объект.(*widget.Label).SetText(строки[i])
-		},
-	)
-	// Показываем конец: причина отказа всегда там.
-	список.ScrollToBottom()
+	текст := widget.NewLabel(strings.Join(строки, "\n"))
+	текст.TextStyle = fyne.TextStyle{Monospace: true}
+	текст.Wrapping = fyne.TextWrapWord
 
-	окноЖурнала := dialog.NewCustom("Журнал подключения", "Закрыть", список, окно)
-	окноЖурнала.Resize(fyne.NewSize(400, 560))
+	прокрутка := container.NewVScroll(текст)
+
+	// Размер берём от самого окна: на телефоне жёстко заданный может
+	// оказаться больше экрана.
+	размер := окно.Canvas().Size()
+	прокрутка.SetMinSize(fyne.NewSize(размер.Width*0.9, размер.Height*0.7))
+
+	окноЖурнала := dialog.NewCustom("Журнал подключения", "Закрыть", прокрутка, окно)
 	окноЖурнала.Show()
+
+	// Причина отказа всегда в конце, поэтому показываем хвост — но уже
+	// после Show, когда прокрутке есть что двигать.
+	прокрутка.ScrollToBottom()
 }
 
 func сообщить(окно fyne.Window, текст string) {

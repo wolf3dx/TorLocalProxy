@@ -19,8 +19,8 @@
 set -e
 
 TOR_VERSION=0.4.9.11
-APP_VERSION=0.0.1
-APP_BUILD=1
+APP_VERSION=0.0.2
+APP_BUILD=2
 ARCH=${1:-amd64}
 
 case "$ARCH" in
@@ -50,7 +50,19 @@ echo "Собираю APK под android/$ARCH..."
 fyne package --target "android/$ARCH" \
   --icon Icon.png --app-id com.vkandreevich.torlocalproxy --name TorLocalProxy
 
-# 3. Вкладываем tor в каталог нативных библиотек пакета.
+# 3. Собираем свои классы Java: службу переднего плана и стартовую
+# activity. Без них Android убивает приложение, как только оно уходит с
+# экрана, — вместе с tor.
+echo "Собираю классы Java..."
+ANDROID_JAR=$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar | sort -r | head -1)
+rm -rf .java-work && mkdir -p .java-work/classes
+"$JAVA_HOME/bin/javac" -source 8 -target 8 -nowarn   -bootclasspath "$ANDROID_JAR" -classpath "$ANDROID_JAR"   -d .java-work/classes $(find java -name '*.java')
+# d8 вызывается через java напрямую: обёртка d8.bat не переживает
+# пробелов в пути к самой себе, а путь к SDK у Visual Studio с пробелами.
+TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -r | head -1)
+"$JAVA_HOME/bin/java" -cp "${TOOLS_DIR}lib/d8.jar" com.android.tools.r8.D8   --lib "$ANDROID_JAR" --output .java-work   $(find .java-work/classes -name '*.class')
+
+# 4. Вкладываем tor в каталог нативных библиотек пакета.
 #
 # Пакет пересобирается целиком, а не дополняется: jar из JDK на архиве
 # от Fyne спотыкается («only DEFLATED entries can have EXT descriptor»).
@@ -70,12 +82,16 @@ with zipfile.ZipFile(исходный) as старый,      zipfile.ZipFile(н�
             continue
         цель.writestr(запись, старый.read(имя))
     цель.write(os.path.join("tor-android", abi, "libtor.so"), f"lib/{abi}/libtor.so")
+    # Свои классы идут вторым файлом dex: Android с пятой версии читает
+    # их из пакета сам, без библиотеки multidex.
+    цель.write(os.path.join(".java-work", "classes.dex"), "classes2.dex")
 
 shutil.move(новый, исходный)
 print(f"tor вложен как lib/{abi}/libtor.so")
 PYTHON
+rm -rf .java-work
 
-# 4. Подписываем заново: добавление файла ломает прежнюю подпись.
+# 5. Подписываем заново: добавление файла ломает прежнюю подпись.
 if [ ! -f debug.keystore ]; then
   "$JAVA_HOME/bin/keytool" -genkeypair -keystore debug.keystore -storepass android \
     -alias androiddebugkey -keypass android -keyalg RSA -validity 10000 \
@@ -86,7 +102,7 @@ echo "Подписываю ($TOOLS)..."
 "${TOOLS}apksigner.bat" sign --ks debug.keystore --ks-pass pass:android \
   --key-pass pass:android TorLocalProxy.apk
 
-# 5. Складываем готовый пакет в Release с версией и архитектурой в имени.
+# 6. Складываем готовый пакет в Release с версией и архитектурой в имени.
 mkdir -p ../../Release
 mv TorLocalProxy.apk "../../Release/TorLocalProxy-$APP_VERSION-$ABI.apk"
 rm -f TorLocalProxy.apk.idsig

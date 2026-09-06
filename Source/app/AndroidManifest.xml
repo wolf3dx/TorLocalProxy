@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+	Свой манифест вместо того, что Fyne создаёт по умолчанию. Ради одного:
+	объявить службу переднего плана.
+
+	Без неё Android свободно убивает приложение, как только оно уходит с
+	экрана: под нехватку памяти или просто по смахиванию из списка задач.
+	Вместе с приложением умирает и tor — прокси перестаёт отвечать, а
+	пользователь узнаёт об этом, когда у него перестал открываться сайт.
+
+	Служба живёт в том же процессе, что и всё остальное, поэтому пока она
+	висит в переднем плане (с постоянным уведомлением, которое видит
+	пользователь), система процесс не трогает.
+
+	Ещё здесь появляется своя стартовая activity: она поднимает службу и
+	сразу передаёт управление окну Fyne. Штатную activity Fyne менять
+	нельзя — она приходит из его библиотеки.
+-->
+<manifest
+	xmlns:android="http://schemas.android.com/apk/res/android"
+	package="com.vkandreevich.torlocalproxy"
+	android:versionCode="2"
+	android:versionName="0.0.2">
+
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+	<uses-permission android:name="android.permission.WAKE_LOCK" />
+
+	<!--
+		Иконку здесь не объявляем: Fyne подставляет её сам и на ручное
+		объявление отвечает отказом («manual declaration of android:icon
+		not supported»).
+	-->
+	<application android:label="TorLocalProxy" android:debuggable="true">
+
+		<!--
+			Стартовая точка: поднимает службу и открывает окно.
+			Собственного вида у неё нет, она сразу закрывается.
+		-->
+		<activity android:name="com.vkandreevich.torlocalproxy.LauncherActivity"
+			android:label="TorLocalProxy"
+			android:exported="true"
+			android:excludeFromRecents="true"
+			android:theme="@android:style/Theme.NoDisplay">
+			<intent-filter>
+				<action android:name="android.intent.action.MAIN" />
+				<category android:name="android.intent.category.LAUNCHER" />
+			</intent-filter>
+		</activity>
+
+		<!-- Окно приложения. Его создаёт Fyne, имя менять нельзя. -->
+		<activity android:name="org.golang.app.GoNativeActivity"
+			android:label="TorLocalProxy"
+			android:configChanges="orientation|keyboardHidden|uiMode"
+			android:exported="false"
+			android:theme="@android:style/Theme">
+			<meta-data android:name="android.app.lib_name" android:value="TorLocalProxy" />
+		</activity>
+
+		<!--
+			Служба переднего плана. Своей работы не делает: её задача —
+			держать процесс живым, пока прокси должен отвечать.
+		-->
+		<service android:name="com.vkandreevich.torlocalproxy.TorService"
+			android:exported="false"
+			android:stopWithTask="false" />
+
+		<receiver android:name="org.golang.app.FyneNotificationReceiver"
+				  android:exported="false" />
+	</application>
+</manifest>

@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -85,12 +86,19 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 		return torrun.Endpoint{}, err
 	}
 
+	файлPID := filepath.Join(cfg.DataDir, "tor.pid")
 	файлПорта := filepath.Join(cfg.DataDir, "control_port")
 	файлЖурнала := filepath.Join(cfg.DataDir, "tor.log")
 	файлCookie := filepath.Join(cfg.DataDir, "control_auth_cookie")
 	файлКонфига := filepath.Join(cfg.DataDir, "torrc")
 
-	// Если порт занят, лучше сказать об этом сразу и внятно, чем дать
+	// Сначала убираем за собой прошлый запуск. Приложение могли снять
+	// из списка задач или убить по нехватке памяти — тогда наш tor
+	// остаётся жить сиротой и держит порт. Пользователь этого не видит
+	// и не понимает, почему «порт занят».
+	убратьПрошлыйЗапуск(файлPID)
+
+	// Если порт занят кем-то ещё, лучше сказать сразу и внятно, чем дать
 	// tor упасть с невнятной строкой в своём журнале. Прототип в этом
 	// месте молча переключался на автоматический выбор — но тогда
 	// пользователь, настроивший 9050, не понимает, почему прокси
@@ -153,6 +161,12 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 	r.процесс = команда
 	r.готов = готов
 	r.мьютекс.Unlock()
+
+	// Запоминаем номер процесса: по нему следующий запуск уберёт за
+	// собой, если этот не переживёт закрытия приложения.
+	if команда.Process != nil {
+		_ = os.WriteFile(файлPID, []byte(strconv.Itoa(команда.Process.Pid)), 0o600)
+	}
 
 	go r.читатьВывод(ошибки)
 	go r.читатьВывод(вывод)
@@ -286,6 +300,31 @@ func (r *Runtime) читатьВывод(поток io.ReadCloser) {
 		r.журнал.добавить(строка)
 		r.мьютекс.Unlock()
 	}
+}
+
+// убратьПрошлыйЗапуск снимает tor, оставшийся от прошлого раза.
+//
+// Ошибки здесь намеренно молчаливые: файла может не быть, номер может
+// принадлежать уже кому-то другому, прав может не хватить. Это уборка
+// на всякий случай, а не операция, от которой что-то зависит.
+func убратьПрошлыйЗапуск(файлPID string) {
+	данные, err := os.ReadFile(файлPID)
+	if err != nil {
+		return
+	}
+	номер, err := strconv.Atoi(strings.TrimSpace(string(данные)))
+	if err != nil || номер <= 1 {
+		_ = os.Remove(файлPID)
+		return
+	}
+
+	процесс, err := os.FindProcess(номер)
+	if err == nil {
+		_ = процесс.Kill()
+		// Даём ядру освободить порты, прежде чем занимать их снова.
+		time.Sleep(300 * time.Millisecond)
+	}
+	_ = os.Remove(файлPID)
 }
 
 // подготовитьКаталог создаёт каталог состояния. tor отказывается
