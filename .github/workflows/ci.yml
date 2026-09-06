@@ -33,12 +33,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: Source/**/go.sum
+          # go.sum появится с первой внешней зависимостью (этап 2).
+          # go.mod в списке нужен, чтобы кеш собирался и до этого.
+          cache-dependency-path: |
+            Source/**/go.mod
+            Source/**/go.sum
 
       # Ни сети, ни установленного tor тесты не требуют: всё, что требует,
       # живёт за тегом сборки integration (PLAN.md, раздел 5.1).
@@ -54,12 +58,16 @@ jobs:
     name: Формат и линтер
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: Source/**/go.sum
+          # go.sum появится с первой внешней зависимостью (этап 2).
+          # go.mod в списке нужен, чтобы кеш собирался и до этого.
+          cache-dependency-path: |
+            Source/**/go.mod
+            Source/**/go.sum
 
       - name: gofmt
         working-directory: Source
@@ -96,12 +104,16 @@ jobs:
           # переживёт и появление cgo на этапе 8.
           - { os: macos-14,       goos: darwin,  goarch: amd64, ext: '' }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: Source/**/go.sum
+          # go.sum появится с первой внешней зависимостью (этап 2).
+          # go.mod в списке нужен, чтобы кеш собирался и до этого.
+          cache-dependency-path: |
+            Source/**/go.mod
+            Source/**/go.sum
 
       - name: go build
         working-directory: Source
