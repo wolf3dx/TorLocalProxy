@@ -27,6 +27,10 @@ dist/
 *.test
 *.out
 vendor/
+# Пробные сборки: go build без -o кладёт exe с именем каталога рядом
+Source/app/app.exe
+Source/app/app
+Source/core/core.exe
 
 # Собранные приложения — в репозиторий не кладём, кроме выпусков в Release
 *.apk
