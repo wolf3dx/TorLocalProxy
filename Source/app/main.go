@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -25,6 +26,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"gitlab.com/vkandreevich/torlocalproxy/core/bridges"
 	"gitlab.com/vkandreevich/torlocalproxy/core/service"
 )
 
@@ -63,25 +65,44 @@ func main() {
 	// Мосты из прошлого запуска — чтобы не вставлять их каждый раз.
 	if сохранённые, err := служба.LoadBridges(); err == nil && сохранённые != "" {
 		экран.мосты.SetText(сохранённые)
+		экран.обновитьПодписьМостов()
 	}
 
-	окно.SetCloseIntercept(func() {
-		_ = служба.Disconnect()
-		окно.Close()
-	})
+	// Подключение при запуске: включается переменной окружения. Нужно
+	// для проверок без участия человека и для случаев, когда прокси
+	// должен подниматься сам, без нажатия кнопки.
+	//
+	// Вешается на событие «приложение запущено», а не запускается сразу:
+	// до старта цикла отрисовки обновления виджетов теряются, и окно
+	// показывало бы «ВЫКЛЮЧЕНО» при работающем прокси.
+	if os.Getenv("TORPROXY_AUTOCONNECT") != "" {
+		приложение.Lifecycle().SetOnStarted(func() {
+			go func() {
+				текст, _ := служба.LoadBridges()
+				_ = служба.Connect(context.Background(), текст,
+					наблюдатель{экран: экран, окно: окно, служба: служба})
+			}()
+		})
+	}
+
+	// Поведение при закрытии платформозависимо: на компьютере окно
+	// уходит в трей, чтобы прокси продолжал отвечать, на телефоне этим
+	// занимается служба переднего плана.
+	настроитьПлатформу(приложение, окно, служба)
 	окно.ShowAndRun()
 }
 
 // экран держит виджеты, которые обновляются по ходу подключения.
 type экран struct {
-	корень      fyne.CanvasObject
-	состояние   *widget.Label
-	фаза        *widget.Label
-	полоса      *widget.ProgressBar
-	мосты       *widget.Entry
-	адрес       *widget.Label
-	подключение *widget.Button
-	цепочка     *widget.Button
+	корень       fyne.CanvasObject
+	состояние    *widget.Label
+	фаза         *widget.Label
+	полоса       *widget.ProgressBar
+	мосты        *widget.Entry
+	адрес        *widget.Label
+	плашкаМостов *widget.Card
+	подключение  *widget.Button
+	цепочка      *widget.Button
 }
 
 func собратьЭкран(окно fyne.Window, служба *service.Service) *экран {
@@ -125,10 +146,11 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 			сообщить(окно, "Не сохранилось: "+err.Error())
 			return
 		}
+		э.обновитьПодписьМостов()
 		сообщить(окно, "Мосты сохранены")
 	})
-	плашкаМостов := widget.NewCard("Мосты", "пусто — подключение напрямую",
-		container.NewVBox(э.мосты, сохранить))
+	э.плашкаМостов = widget.NewCard("Мосты", "", container.NewVBox(э.мосты, сохранить))
+	э.обновитьПодписьМостов()
 
 	// ---- Плашка 3: журнал -------------------------------------------
 	журнал := widget.NewButtonWithIcon("Посмотреть журнал", theme.DocumentIcon(), func() {
@@ -152,7 +174,7 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	содержимое := container.NewVBox(
 		плашкаСостояния,
 		плашкаАдреса,
-		плашкаМостов,
+		э.плашкаМостов,
 		журнал,
 		layout.NewSpacer(),
 		container.NewGridWithColumns(2, э.подключение, э.цепочка),
@@ -163,6 +185,23 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 
 // переключить подключает или отключает — в зависимости от того, где мы
 // сейчас.
+// обновитьПодписьМостов держит подпись плашки в согласии с полем.
+//
+// Подпись — единственное место, где видно, разобрались ли вставленные
+// строки. Пока она была постоянной, окно уверяло «пусто — подключение
+// напрямую» при полном поле мостов.
+func (э *экран) обновитьПодписьМостов() {
+	годные, _ := bridges.Parse(э.мосты.Text)
+	switch {
+	case len(годные) == 0 && strings.TrimSpace(э.мосты.Text) == "":
+		э.плашкаМостов.SetSubTitle("пусто — подключение напрямую")
+	case len(годные) == 0:
+		э.плашкаМостов.SetSubTitle("строки не разобраны — проверьте текст")
+	default:
+		э.плашкаМостов.SetSubTitle(fmt.Sprintf("разобрано мостов: %d", len(годные)))
+	}
+}
+
 func (э *экран) переключить(окно fyne.Window, служба *service.Service) {
 	if служба.State() == service.StateConnected {
 		_ = служба.Disconnect()
