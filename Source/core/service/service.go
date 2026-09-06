@@ -24,6 +24,7 @@ import (
 
 	"gitlab.com/vkandreevich/torlocalproxy/core/bridges"
 	"gitlab.com/vkandreevich/torlocalproxy/core/control"
+	"gitlab.com/vkandreevich/torlocalproxy/core/httpproxy"
 	"gitlab.com/vkandreevich/torlocalproxy/core/ptrun"
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun"
 )
@@ -64,6 +65,13 @@ type Options struct {
 	StateDir string
 	// SocksPort — 0 означает «пусть tor выберет свободный сам».
 	SocksPort int
+	// HTTPPort — порт HTTP-прокси поверх SOCKS5. 0 отключает его вовсе.
+	//
+	// Нужен там, где SOCKS5 вписать некуда: многие программы знают
+	// только HTTP-прокси, а системные настройки Wi-Fi на iOS — тем
+	// более, SOCKS в них нет. Поднимается сам после подключения к
+	// сети и гаснет вместе с ним.
+	HTTPPort int
 	// Runtime — как поднимать tor. Пусто недопустимо: выбор реализации
 	// (отдельный процесс или встроенная библиотека) делает вызывающий,
 	// потому что он зависит от платформы сборки.
@@ -85,6 +93,7 @@ type Service struct {
 	процент   int
 	фаза      string
 	socks     string
+	http      *httpproxy.Server
 	журнал    []string
 	клиент    control.Client
 	отмена    context.CancelFunc
@@ -132,6 +141,18 @@ func (s *Service) SocksAddress() string {
 	s.мьютекс.Lock()
 	defer s.мьютекс.Unlock()
 	return s.socks
+}
+
+// HTTPAddress возвращает адрес HTTP-прокси. Пусто, если он выключен
+// настройкой или подключение ещё не установлено.
+func (s *Service) HTTPAddress() string {
+	s.мьютекс.Lock()
+	прокси := s.http
+	s.мьютекс.Unlock()
+	if прокси == nil {
+		return ""
+	}
+	return прокси.Address()
 }
 
 // Log возвращает накопленный журнал — то, что показывает кнопка
@@ -244,8 +265,33 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 	s.socks = адрес
 	s.мьютекс.Unlock()
 	s.записать(fmt.Sprintf("Подключено на %d%%. Прокси SOCKS5: %s", итог.Percent, адрес))
+
+	// HTTP-прокси поднимается последним и его отказ подключение не
+	// рвёт: SOCKS5 уже работает, а без HTTP обойдутся те, кто умеет
+	// SOCKS. Причина отказа уходит в журнал.
+	s.поднятьHTTP(адрес)
+
 	s.сменитьСостояние(StateConnected)
 	return nil
+}
+
+// поднятьHTTP запускает HTTP-прокси поверх уже работающего SOCKS5.
+func (s *Service) поднятьHTTP(socks string) {
+	if s.настройки.HTTPPort == 0 {
+		return
+	}
+	прокси := httpproxy.New(httpproxy.Options{
+		Listen: fmt.Sprintf("127.0.0.1:%d", s.настройки.HTTPPort),
+		Socks:  socks,
+		Log:    s.записать,
+	})
+	if err := прокси.Start(); err != nil {
+		s.записать("HTTP-прокси не поднялся: " + err.Error())
+		return
+	}
+	s.мьютекс.Lock()
+	s.http = прокси
+	s.мьютекс.Unlock()
 }
 
 // следитьЗаПодключением переводит события в вызовы Observer и следит за
@@ -395,12 +441,17 @@ func (s *Service) LoadBridges() (string, error) {
 // некому — всё, что можно, уже в журнале.
 func (s *Service) свернуть() {
 	s.мьютекс.Lock()
-	клиент, отмена := s.клиент, s.отмена
-	s.клиент, s.отмена = nil, nil
+	клиент, отмена, прокси := s.клиент, s.отмена, s.http
+	s.клиент, s.отмена, s.http = nil, nil, nil
 	s.мьютекс.Unlock()
 
 	if отмена != nil {
 		отмена()
+	}
+	// HTTP-прокси — первым: он ходит через SOCKS5 тора, и держать его
+	// открытым после смерти тора незачем.
+	if прокси != nil {
+		_ = прокси.Stop()
 	}
 	if клиент != nil {
 		_ = клиент.Close()

@@ -40,6 +40,14 @@ const ИдПриложения = "com.vkandreevich.torlocalproxy"
 // Tor Browser и у Orbot, его же ожидают готовые инструкции в интернете.
 const ПортProxy = 9050
 
+// ПортHTTP — порт HTTP-прокси поверх того же тора.
+//
+// Нужен там, где SOCKS5 вписать некуда: программы нередко знают только
+// HTTP-прокси, а системные настройки Wi-Fi на iOS — тем более, SOCKS в
+// них нет вовсе. 8118 — традиционный порт Privoxy, того самого, что
+// десятки лет ставили рядом с тором ровно для этого.
+const ПортHTTP = 8118
+
 func main() {
 	приложение := app.NewWithID(ИдПриложения)
 	приложение.Settings().SetTheme(theme.DarkTheme())
@@ -51,6 +59,7 @@ func main() {
 	служба, err := service.New(service.Options{
 		StateDir:  каталог,
 		SocksPort: ПортProxy,
+		HTTPPort:  ПортHTTP,
 		Runtime:   создатьЗапускTor(каталог),
 	})
 	if err != nil {
@@ -100,6 +109,7 @@ type экран struct {
 	полоса       *widget.ProgressBar
 	мосты        *widget.Entry
 	адрес        *widget.Label
+	адресHTTP    *widget.Label
 	плашкаМостов *widget.Card
 	подключение  *widget.Button
 	цепочка      *widget.Button
@@ -125,16 +135,21 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	// очередную программу.
 	э.адрес = widget.NewLabelWithStyle("—", fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
 	копировать := widget.NewButtonWithIcon("Копировать", theme.ContentCopyIcon(), func() {
-		текст := э.адрес.Text
-		if текст == "—" {
-			сообщить(окно, "Прокси ещё не поднят")
-			return
-		}
-		окно.Clipboard().SetContent(текст)
-		сообщить(окно, "Адрес скопирован")
+		скопировать(окно, э.адрес.Text)
 	})
+
+	// Второй адрес — для тех, кто SOCKS5 не умеет. Таких много: у
+	// многих программ в настройках только HTTP-прокси, а на iPhone
+	// системные настройки Wi-Fi знают исключительно его.
+	э.адресHTTP = widget.NewLabelWithStyle("—", fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
+	копироватьHTTP := widget.NewButtonWithIcon("Копировать", theme.ContentCopyIcon(), func() {
+		скопировать(окно, э.адресHTTP.Text)
+	})
+
 	плашкаАдреса := widget.NewCard("Прокси SOCKS5", "вписать в настройки приложения",
 		container.NewVBox(э.адрес, копировать))
+	плашкаHTTP := widget.NewCard("Прокси HTTP", "если программа не умеет SOCKS5",
+		container.NewVBox(э.адресHTTP, копироватьHTTP))
 
 	// ---- Плашка 2: мосты --------------------------------------------
 	э.мосты = widget.NewMultiLineEntry()
@@ -174,6 +189,7 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	содержимое := container.NewVBox(
 		плашкаСостояния,
 		плашкаАдреса,
+		плашкаHTTP,
 		э.плашкаМостов,
 		журнал,
 		layout.NewSpacer(),
@@ -268,6 +284,11 @@ func (н наблюдатель) OnState(state string) {
 			// Ради этой строки всё и затевалось: её вписывают в чужие
 			// приложения. Порт каждый раз новый — его выбирает tor.
 			н.экран.адрес.SetText(н.служба.SocksAddress())
+			if адрес := н.служба.HTTPAddress(); адрес != "" {
+				н.экран.адресHTTP.SetText(адрес)
+			} else {
+				н.экран.адресHTTP.SetText("не поднялся — см. журнал")
+			}
 			н.экран.подключение.SetText("Отключить")
 			н.экран.подключение.SetIcon(theme.MediaStopIcon())
 			н.экран.цепочка.Enable()
@@ -281,6 +302,7 @@ func (н наблюдатель) OnState(state string) {
 			н.экран.цепочка.Disable()
 			н.экран.полоса.Hide()
 			н.экран.адрес.SetText("—")
+			н.экран.адресHTTP.SetText("—")
 
 		default:
 			н.экран.состояние.SetText("ВЫКЛЮЧЕНО")
@@ -290,6 +312,7 @@ func (н наблюдатель) OnState(state string) {
 			н.экран.цепочка.Disable()
 			н.экран.полоса.Hide()
 			н.экран.адрес.SetText("—")
+			н.экран.адресHTTP.SetText("—")
 		}
 	})
 }
@@ -326,6 +349,17 @@ func показатьЖурнал(окно fyne.Window, служба *service.Se
 	// Причина отказа всегда в конце, поэтому показываем хвост — но уже
 	// после Show, когда прокрутке есть что двигать.
 	прокрутка.ScrollToBottom()
+}
+
+// скопировать кладёт адрес в буфер обмена. Отдельной функцией — потому
+// что адресов теперь два, а поведение у кнопок одно.
+func скопировать(окно fyne.Window, текст string) {
+	if текст == "" || текст == "—" {
+		сообщить(окно, "Прокси ещё не поднят")
+		return
+	}
+	окно.Clipboard().SetContent(текст)
+	сообщить(окно, "Адрес скопирован")
 }
 
 func сообщить(окно fyne.Window, текст string) {
