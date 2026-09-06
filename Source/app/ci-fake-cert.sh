@@ -33,12 +33,13 @@ WORK=$(mktemp -d)
 cd "$WORK"
 
 echo "Делаю самоподписанный сертификат..."
-openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -nodes \
-  -keyout ci.key -out ci.crt \
-  -subj "/CN=$CERT_NAME/OU=$TEAM_ID/O=TorLocalProxy CI/C=US" \
-  -addext extendedKeyUsage=codeSigning >/dev/null 2>&1
-openssl pkcs12 -export -out ci.p12 -inkey ci.key -in ci.crt \
-  -passout "pass:$PASSWORD" >/dev/null 2>&1
+# Приватный ключ здесь не нужен и в связку не кладётся: fyne читает из
+# сертификата единственное — код команды разработчика, а подписывать мы
+# всё равно ничего не будем. Первая попытка шла через PKCS12, и macOS
+# его не принял: «MAC verification failed» — OpenSSL 3 упаковывает
+# контейнер по-новому, а security читает по-старому. Без ключа этой
+# беды нет вовсе.
+openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -nodes   -keyout ci.key -out ci.crt   -subj "/CN=$CERT_NAME/OU=$TEAM_ID/O=TorLocalProxy CI/C=US"   -addext extendedKeyUsage=codeSigning >/dev/null 2>&1
 
 echo "Кладу его в отдельную связку ключей..."
 security delete-keychain "$KEYCHAIN" 2>/dev/null || true
@@ -47,14 +48,19 @@ security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
 # Срок жизни связки без пароля: по умолчанию она запирается через пять
 # минут, а сборка идёт дольше.
 security set-keychain-settings -t 7200 -u "$KEYCHAIN"
-security import ci.p12 -k "$KEYCHAIN" -P "$PASSWORD" \
-  -T /usr/bin/codesign -T /usr/bin/security
-security set-key-partition-list -S apple-tool:,apple:,codesign: \
-  -s -k "$PASSWORD" "$KEYCHAIN" >/dev/null
+security import ci.crt -k "$KEYCHAIN" -A
 # Своя связка должна искаться первой, но login.keychain из списка
 # убирать нельзя: в ней лежат сертификаты самого Xcode.
 security list-keychains -d user -s "$KEYCHAIN" login.keychain
-security find-certificate -c "iPhone Developer" -p >/dev/null
+
+# Проверяем сразу и здесь: fyne ищет сертификат ровно этой командой, и
+# если она молчит, лучше упасть тут, с внятной причиной.
+if ! security find-certificate -c "iPhone Developer" -p | grep -q "BEGIN CERTIFICATE"; then
+  echo "сертификат в связке не находится — дальше идти незачем" >&2
+  security find-certificate -a -c "iPhone Developer" || true
+  exit 1
+fi
+echo "Сертификат на месте."
 
 echo "Готовлю xcconfig, отключающий подпись..."
 XCCONFIG="$WORK/no-signing.xcconfig"
