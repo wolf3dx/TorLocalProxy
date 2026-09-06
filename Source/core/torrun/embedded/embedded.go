@@ -1,22 +1,24 @@
-//go:build cgo && (android || linux || darwin)
-
 // Package embedded поднимает tor библиотекой внутри нашего процесса.
 //
-// Так работает мобильная поставка. На Android нельзя положить рядом с
-// приложением посторонний исполняемый файл и запустить его, а на iOS
-// дочерние процессы запрещены совсем (ЛОГИКА.md, раздел 2.1). Тот же
-// интерфейс torrun.Runtime, что и у отдельного процесса, — вызывающий
-// разницы не видит.
+// Так работает поставка для iPhone: на iOS запуск дочерних процессов
+// запрещён совсем, и другого пути там нет. На Windows, Android и Linux
+// tor запускается отдельным процессом (пакет external) — это надёжнее:
+// что бы с ним ни случилось, окно останется живым и покажет причину.
 //
-// Внутри — berty.tech/go-libtor: настоящий tor, собранный статически
-// вместе с OpenSSL, libevent и zlib. Отсюда требования к сборке:
+// Саму библиотеку этот пакет не содержит и не выбирает: её приносит
+// вызывающий в Options.Creator. Реализация для iOS лежит в torrun/torlib
+// и требует cgo вместе со статическим архивом tor; здесь же только
+// обвязка вокруг неё — torrc, ожидание control-порта, чтение журнала.
+// Поэтому пакет собирается везде и ничего лишнего в сборку не тянет.
 //
-//	CGO_ENABLED=1
-//	-tags "staticOpenssl,staticZlib,staticLibevent"
-//
-// Без тегов исходники OpenSSL остаются за бортом, и сборка падает на
-// «openssl/opensslv.h file not found». Под Windows этой реализации нет
-// вовсе — там работает external.
+// Одно свойство встроенного tor протекает наружу, и его надо знать.
+// Остановить его снаружи нечем: сигнала не пошлёшь, он внутри нас.
+// Поэтому Stop не убивает процесс, а просит tor завершиться через
+// control-порт — как это сделал бы человек командой SIGNAL HALT. И
+// запустить tor в одном процессе дважды нельзя: tor_api.h прямо
+// предупреждает, что повторный вызов может кончиться падением
+// (ошибка 23847 в их учёте). После Stop на iOS приложение придётся
+// перезапустить — об этом пишется в журнал.
 package embedded
 
 import (
@@ -25,27 +27,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"berty.tech/go-libtor"
 	"github.com/cretz/bine/process"
 
 	"gitlab.com/vkandreevich/torlocalproxy/core/torconf"
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun"
 )
 
-// Available говорит, собрана ли в это приложение встроенная реализация.
-const Available = true
-
 // строкЖурнала — сколько последних строк вывода tor держать для ошибки.
 const строкЖурнала = 20
 
 // Options настраивает запуск.
 type Options struct {
+	// Creator — чем поднимать tor. Обязателен: сам пакет библиотеки в
+	// себе не несёт, её приносит платформенная сборка (torrun/torlib).
+	Creator process.Creator
 	// Log — куда отдавать строки вывода tor по мере поступления. Пусто —
 	// только копить для сообщения об ошибке.
 	Log func(string)
@@ -60,6 +62,11 @@ type Runtime struct {
 	отмена  context.CancelFunc
 	готов   chan struct{}
 	журнал  torrun.Кольцо
+
+	// Пути нужны для остановки: чтобы попросить tor завершиться, надо
+	// заново открыть control-порт и предъявить cookie.
+	файлПорта  string
+	файлCookie string
 }
 
 var _ torrun.Runtime = (*Runtime)(nil)
@@ -78,6 +85,10 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 	r.журнал.Очистить()
 	r.мьютекс.Unlock()
 
+	if r.настройки.Creator == nil {
+		return torrun.Endpoint{}, errors.New(
+			"встроенный tor в эту сборку не включён: не задан Options.Creator")
+	}
 	if cfg.DataDir == "" {
 		return torrun.Endpoint{}, errors.New("не задан каталог состояния tor")
 	}
@@ -118,7 +129,7 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 
 	// Свой ctx: жизнь tor кончается вместе с ним, а не со сроком запуска.
 	жизнь, отмена := context.WithCancel(context.Background())
-	процесс, err := libtor.Creator.New(жизнь, "-f", файлКонфига)
+	процесс, err := r.настройки.Creator.New(жизнь, "-f", файлКонфига)
 	if err != nil {
 		отмена()
 		return torrun.Endpoint{}, fmt.Errorf("не создался встроенный tor: %w", err)
@@ -131,6 +142,7 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 	готов := make(chan struct{})
 	r.мьютекс.Lock()
 	r.процесс, r.отмена, r.готов = процесс, отмена, готов
+	r.файлПорта, r.файлCookie = файлПорта, файлCookie
 	r.мьютекс.Unlock()
 
 	go func() {
@@ -158,18 +170,77 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 	return конец, nil
 }
 
-// Stop останавливает tor. Безопасен при повторном вызове и до Start.
+// Stop просит встроенный tor завершиться. Безопасен при повторном
+// вызове и до Start.
+//
+// Отмена контекста здесь ничего не решает: она вернёт управление
+// нашему ожиданию, но сам tor продолжит работать — он выполняется
+// внутри нашего процесса. Единственный опрятный способ — сказать ему
+// об этом через control-порт, что мы и делаем.
 func (r *Runtime) Stop() error {
 	r.мьютекс.Lock()
 	отмена, готов := r.отмена, r.готов
+	порт, cookie := r.файлПорта, r.файлCookie
 	r.процесс, r.отмена, r.готов = nil, nil, nil
 	r.мьютекс.Unlock()
 
 	if отмена == nil {
 		return nil
 	}
+
+	if err := попроситьЗавершиться(порт, cookie); err != nil {
+		r.записать("не удалось попросить tor завершиться: " + err.Error())
+	}
+
+	// Ждём недолго: если tor не ушёл сам, дальше ждать бессмысленно —
+	// убить его всё равно нечем.
+	select {
+	case <-готов:
+		r.записать("Встроенный tor завершился. Для нового подключения " +
+			"приложение придётся перезапустить: дважды в одном процессе " +
+			"tor запускать нельзя.")
+	case <-time.After(СрокОстанова):
+		r.записать("tor не завершился за " + СрокОстанова.String() +
+			"; перезапустите приложение")
+	}
 	отмена()
-	<-готов
+	return nil
+}
+
+// СрокОстанова — сколько ждать, пока tor уйдёт по просьбе.
+const СрокОстанова = 10 * time.Second
+
+// попроситьЗавершиться открывает control-порт и посылает SIGNAL HALT —
+// ту же команду, которой останавливают обычный tor.
+func попроситьЗавершиться(файлПорта, файлCookie string) error {
+	if файлПорта == "" || файлCookie == "" {
+		return errors.New("неизвестны пути control-порта")
+	}
+	адрес, err := torrun.ЧитатьАдресControl(файлПорта)
+	if err != nil {
+		return err
+	}
+	ключ, err := os.ReadFile(файлCookie)
+	if err != nil {
+		return fmt.Errorf("не прочитался cookie: %w", err)
+	}
+
+	соединение, err := net.DialTimeout("tcp", адрес, СрокОстанова)
+	if err != nil {
+		return fmt.Errorf("не открылся control-порт: %w", err)
+	}
+	defer func() { _ = соединение.Close() }()
+	_ = соединение.SetDeadline(time.Now().Add(СрокОстанова))
+
+	// Проверка подлинности по cookie: она передаётся шестнадцатеричной
+	// строкой, ровно как это делает tor-контроллер.
+	команды := fmt.Sprintf("AUTHENTICATE %x\r\nSIGNAL HALT\r\n", ключ)
+	if _, err := соединение.Write([]byte(команды)); err != nil {
+		return fmt.Errorf("не отправилась команда: %w", err)
+	}
+	// Ответ читаем, но не разбираем: tor уходит и может оборвать связь
+	// прямо посреди ответа — это не ошибка, а ровно то, чего мы просили.
+	_, _ = io.ReadAll(соединение)
 	return nil
 }
 

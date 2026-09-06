@@ -46,6 +46,16 @@ Release/Архив/
 # tor от Guardian Project — качается скриптом сборки, в репозиторий не кладём
 Source/app/tor-android/
 
+# tor для iOS — тоже качается при сборке (рамка iCepa, около 140 МБ).
+# В репозитории лежит только скрипт, который её приносит.
+Source/app/.tor-ios-cache/
+Source/core/torrun/torlib/lib/
+Source/core/torrun/torlib/include/
+
+# Готовые сборки под Apple
+Source/app/*.app/
+Source/app/launch.log
+
 # Мобильные сборки
 /android/build/
 /android/.gradle/
