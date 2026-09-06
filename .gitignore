@@ -28,6 +28,10 @@ dist/
 *.out
 vendor/
 
+# Собранные приложения и снимки экрана
+*.apk
+*.aab
+
 # Мобильные сборки
 /android/build/
 /android/.gradle/
