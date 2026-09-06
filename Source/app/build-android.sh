@@ -19,6 +19,8 @@
 set -e
 
 TOR_VERSION=0.4.9.11
+APP_VERSION=0.0.1
+APP_BUILD=1
 ARCH=${1:-amd64}
 
 case "$ARCH" in
@@ -84,4 +86,9 @@ echo "Подписываю ($TOOLS)..."
 "${TOOLS}apksigner.bat" sign --ks debug.keystore --ks-pass pass:android \
   --key-pass pass:android TorLocalProxy.apk
 
-echo "Готово: TorLocalProxy.apk"
+# 5. Складываем готовый пакет в Release с версией и архитектурой в имени.
+mkdir -p ../../Release
+mv TorLocalProxy.apk "../../Release/TorLocalProxy-$APP_VERSION-$ABI.apk"
+rm -f TorLocalProxy.apk.idsig
+
+echo "Готово: Release/TorLocalProxy-$APP_VERSION-$ABI.apk"

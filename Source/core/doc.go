@@ -14,8 +14,10 @@ const Name = "TorLocalProxy"
 //
 //	go build -ldflags "-X gitlab.com/vkandreevich/torlocalproxy/core.Version=1.2.3 -X gitlab.com/vkandreevich/torlocalproxy/core.Commit=abc1234"
 var (
-	// Version — версия выпуска; "dev" в сборке из рабочей копии.
-	Version = "dev"
+	// Version — версия выпуска. Значение по умолчанию соответствует
+	// текущей ветке разработки; в сборке выпуска подставляется
+	// линковщиком из тега.
+	Version = "0.0.1"
 	// Commit — короткий хеш коммита, из которого собрано.
 	Commit = "unknown"
 )
