@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,11 +24,13 @@ type поддельныйЗапуск struct {
 	запущен  int
 	остановл int
 	мосты    int
+	плагины  []torrun.PTPlugin
 }
 
 func (п *поддельныйЗапуск) Start(_ context.Context, cfg torrun.Config) (torrun.Endpoint, error) {
 	п.запущен++
 	п.мосты = len(cfg.Bridges)
+	п.плагины = cfg.PTPlugins
 	if п.ошибка != nil {
 		return torrun.Endpoint{}, п.ошибка
 	}
@@ -36,6 +39,27 @@ func (п *поддельныйЗапуск) Start(_ context.Context, cfg torrun.
 
 func (п *поддельныйЗапуск) Stop() error {
 	п.остановл++
+	return nil
+}
+
+// поддельныеТранспорты изображают ptrun.Runner, ничего не поднимая.
+type поддельныеТранспорты struct {
+	плагины   []torrun.PTPlugin
+	ошибка    error
+	поднято   []string
+	остановки int
+}
+
+func (т *поддельныеТранспорты) Start(имена []string, _ string) ([]torrun.PTPlugin, error) {
+	т.поднято = append([]string(nil), имена...)
+	if т.ошибка != nil {
+		return nil, т.ошибка
+	}
+	return т.плагины, nil
+}
+
+func (т *поддельныеТранспорты) Stop() error {
+	т.остановки++
 	return nil
 }
 
@@ -112,9 +136,16 @@ func (н *записнойНаблюдатель) снимок() ([]string, []in
 // служба собирает Service на подставках.
 func служба(t *testing.T, запуск *поддельныйЗапуск, клиент *поддельныйКлиент) *Service {
 	t.Helper()
+	return службаСТранспортами(t, запуск, клиент, &поддельныеТранспорты{})
+}
+
+func службаСТранспортами(t *testing.T, запуск *поддельныйЗапуск, клиент *поддельныйКлиент,
+	транспорты *поддельныеТранспорты) *Service {
+	t.Helper()
 	s, err := New(Options{
-		StateDir: t.TempDir(),
-		Runtime:  запуск,
+		StateDir:   t.TempDir(),
+		Runtime:    запуск,
+		Transports: транспорты,
 		Dial: func(context.Context, string, control.Options) (control.Client, error) {
 			return клиент, nil
 		},
@@ -284,21 +315,83 @@ func TestМостыПопадаютВЗапуск(t *testing.T) {
 	}
 }
 
-// Отсутствие транспорта диагностируется ДО запуска tor: иначе tor молча
-// стартует и падает с ошибкой, по которой ничего не понять.
-func TestТранспортБезПоддержкиОтклоняетсяДоЗапуска(t *testing.T) {
+// Транспорт, которого нет в сборке, диагностируется ДО запуска чего
+// угодно: иначе tor стартует и падает с ошибкой, по которой ничего не
+// понять.
+func TestНеподдерживаемыйТранспортОтклоняетсяДоЗапуска(t *testing.T) {
 	запуск := &поддельныйЗапуск{конец: torrun.Endpoint{ControlAddress: "127.0.0.1:9051"}}
-	s := служба(t, запуск, &поддельныйКлиент{})
+	транспорты := &поддельныеТранспорты{}
+	s := службаСТранспортами(t, запуск, &поддельныйКлиент{}, транспорты)
+
+	err := s.Connect(context.Background(),
+		"webtunnel [2001:db8::1]:443 "+отпечаток+" url=https://a.example/x", nil)
+	if err == nil {
+		t.Fatal("ожидался отказ: webtunnel в сборку не входит")
+	}
+	if !strings.Contains(err.Error(), "webtunnel") {
+		t.Errorf("ошибка не называет транспорт: %v", err)
+	}
+	if запуск.запущен != 0 || len(транспорты.поднято) != 0 {
+		t.Error("ни tor, ни транспорты не должны запускаться")
+	}
+}
+
+// obfs4 в сборке есть — мосты с ним должны проходить, а адрес поднятого
+// транспорта попадать в конфиг tor.
+func TestObfs4ПоднимаетсяИПопадаетВКонфиг(t *testing.T) {
+	запуск := &поддельныйЗапуск{конец: torrun.Endpoint{ControlAddress: "127.0.0.1:9051"}}
+	транспорты := &поддельныеТранспорты{
+		плагины: []torrun.PTPlugin{{Transports: []string{"obfs4"}, Address: "127.0.0.1:41000"}},
+	}
+	клиент := &поддельныйКлиент{шаги: полныйХод(), адресSocks: "127.0.0.1:9050"}
+	s := службаСТранспортами(t, запуск, клиент, транспорты)
+
+	текст := "obfs4 192.0.2.1:9443 " + отпечаток + " cert=AAA iat-mode=0"
+	if err := s.Connect(context.Background(), текст, nil); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if !slices.Equal(транспорты.поднято, []string{"obfs4"}) {
+		t.Errorf("поднимали %v, ожидался obfs4", транспорты.поднято)
+	}
+	if len(запуск.плагины) != 1 || запуск.плагины[0].Address != "127.0.0.1:41000" {
+		t.Errorf("адрес транспорта не дошёл до tor: %+v", запуск.плагины)
+	}
+}
+
+// Транспорты поднимаются раньше tor: их адреса нужны в torrc. Значит и
+// отказ транспорта обязан останавливать всё до запуска tor.
+func TestОтказТранспортаНеДаётЗапуститьTor(t *testing.T) {
+	запуск := &поддельныйЗапуск{конец: torrun.Endpoint{ControlAddress: "127.0.0.1:9051"}}
+	транспорты := &поддельныеТранспорты{ошибка: errors.New("порт не занялся")}
+	s := службаСТранспортами(t, запуск, &поддельныйКлиент{}, транспорты)
 
 	err := s.Connect(context.Background(), "obfs4 192.0.2.1:9443 "+отпечаток+" cert=AAA", nil)
 	if err == nil {
-		t.Fatal("ожидался отказ: транспорт пока не поднимается")
-	}
-	if !strings.Contains(err.Error(), "obfs4") {
-		t.Errorf("ошибка не называет транспорт: %v", err)
+		t.Fatal("ожидался отказ")
 	}
 	if запуск.запущен != 0 {
-		t.Error("tor не должен запускаться, если транспорт заведомо не поднять")
+		t.Error("tor не должен запускаться без транспорта")
+	}
+}
+
+// При отключении останавливаются и транспорты — иначе они останутся
+// висеть на портах после «Отключить».
+func TestDisconnectОстанавливаетТранспорты(t *testing.T) {
+	запуск := &поддельныйЗапуск{конец: torrun.Endpoint{ControlAddress: "127.0.0.1:9051"}}
+	транспорты := &поддельныеТранспорты{
+		плагины: []torrun.PTPlugin{{Transports: []string{"obfs4"}, Address: "127.0.0.1:41000"}},
+	}
+	клиент := &поддельныйКлиент{шаги: полныйХод(), адресSocks: "127.0.0.1:9050"}
+	s := службаСТранспортами(t, запуск, клиент, транспорты)
+
+	if err := s.Connect(context.Background(), "obfs4 192.0.2.1:9443 "+отпечаток+" cert=AAA", nil); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := s.Disconnect(); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if транспорты.остановки == 0 {
+		t.Error("транспорты остались подняты после Disconnect")
 	}
 }
 

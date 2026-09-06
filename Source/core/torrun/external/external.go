@@ -109,10 +109,13 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 		}
 	}
 
+	// В torrc уходят пути в форме, которую переживёт сам tor: под Windows
+	// это короткие имена 8.3 (см. путьДляTor). Себе оставляем исходные —
+	// файл control_port мы читаем своими средствами, и им всё равно.
 	конфиг := torconf.Build(torconf.Config{
-		DataDir:     cfg.DataDir,
-		LogFile:     файлЖурнала,
-		ControlFile: файлПорта,
+		DataDir:     путьДляTor(cfg.DataDir),
+		LogFile:     путьДляTor(файлЖурнала),
+		ControlFile: путьДляTor(файлПорта),
 		SocksPort:   cfg.SocksPort,
 		Bridges:     cfg.Bridges,
 		Plugins:     cfg.PTPlugins,
@@ -128,10 +131,16 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 	аргументы := append(append([]string{}, r.настройки.Args...), "-f", файлКонфига)
 	команда := exec.Command(бинарник, аргументы...)
 	команда.Dir = filepath.Dir(бинарник)
-	команда.Stdout = io.Discard
-	поток, err := команда.StderrPipe()
+	// Читаются оба потока: раннюю жалобу на конфиг tor пишет в stdout,
+	// ещё до того как узнает про Log-файл. Без stdout отказ выглядит как
+	// «процесс завершился» без единой подсказки.
+	ошибки, err := команда.StderrPipe()
 	if err != nil {
 		return torrun.Endpoint{}, fmt.Errorf("не открылся поток ошибок tor: %w", err)
+	}
+	вывод, err := команда.StdoutPipe()
+	if err != nil {
+		return torrun.Endpoint{}, fmt.Errorf("не открылся поток вывода tor: %w", err)
 	}
 	скрытьОкно(команда)
 
@@ -145,7 +154,8 @@ func (r *Runtime) Start(ctx context.Context, cfg torrun.Config) (torrun.Endpoint
 	r.готов = готов
 	r.мьютекс.Unlock()
 
-	go r.читатьОшибки(поток)
+	go r.читатьВывод(ошибки)
+	go r.читатьВывод(вывод)
 	go func() {
 		_ = команда.Wait()
 		close(готов)
@@ -265,7 +275,7 @@ func хвостЖурнала(строки []string) string {
 	return ".\nЧто сказал tor:\n  " + strings.Join(строки, "\n  ")
 }
 
-func (r *Runtime) читатьОшибки(поток io.ReadCloser) {
+func (r *Runtime) читатьВывод(поток io.ReadCloser) {
 	сканер := bufio.NewScanner(поток)
 	for сканер.Scan() {
 		строка := strings.TrimSpace(сканер.Text())

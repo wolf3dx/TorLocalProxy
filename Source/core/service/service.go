@@ -17,12 +17,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"gitlab.com/vkandreevich/torlocalproxy/core/bridges"
 	"gitlab.com/vkandreevich/torlocalproxy/core/control"
+	"gitlab.com/vkandreevich/torlocalproxy/core/ptrun"
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun"
 )
 
@@ -66,6 +68,9 @@ type Options struct {
 	// (отдельный процесс или встроенная библиотека) делает вызывающий,
 	// потому что он зависит от платформы сборки.
 	Runtime torrun.Runtime
+	// Transports — как поднимать pluggable transports. Пусто — ptrun.New
+	// с записью в журнал службы.
+	Transports ptrun.Runner
 	// Dial — как открывать control-соединение. Пусто — control.Dial.
 	// Поле существует ради тестов: с ним служба проверяется без tor.
 	Dial func(ctx context.Context, address string, opts control.Options) (control.Client, error)
@@ -97,7 +102,14 @@ func New(opts Options) (*Service, error) {
 	if opts.Dial == nil {
 		opts.Dial = control.Dial
 	}
-	return &Service{настройки: opts, состояние: StateIdle}, nil
+
+	s := &Service{настройки: opts, состояние: StateIdle}
+	if s.настройки.Transports == nil {
+		// Журнал транспортов сливается с журналом службы: пользователю
+		// нужна одна лента, а не две.
+		s.настройки.Transports = ptrun.New(ptrun.Options{Log: s.записать})
+	}
+	return s, nil
 }
 
 // State возвращает текущее состояние.
@@ -161,11 +173,18 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 	s.мьютекс.Unlock()
 	defer отмена()
 
+	плагины, err := s.поднятьТранспорты(мосты)
+	if err != nil {
+		s.провал(err)
+		return err
+	}
+
 	s.записать("Запуск tor")
 	конец, err := s.настройки.Runtime.Start(ctx, torrun.Config{
 		DataDir:   s.настройки.StateDir,
 		Bridges:   мосты,
 		SocksPort: s.настройки.SocksPort,
+		PTPlugins: плагины,
 	})
 	if err != nil {
 		s.провал(fmt.Errorf("не удалось запустить tor: %w", err))
@@ -285,13 +304,39 @@ func (s *Service) подготовитьМосты(текст string) ([]bridges
 	}
 	s.записать(fmt.Sprintf("Мостов распознано: %d", len(разобранные)))
 
-	if транспорты := bridges.Transports(разобранные); len(транспорты) > 0 {
+	// Отсутствие транспорта диагностируется до запуска чего угодно: иначе
+	// tor стартует, не может выполнить ClientTransportPlugin и падает с
+	// ошибкой, по которой ничего не понять.
+	поддерживаемые := ptrun.Supported()
+	var нечемПоднять []string
+	for _, транспорт := range bridges.Transports(разобранные) {
+		if !slices.Contains(поддерживаемые, транспорт) {
+			нечемПоднять = append(нечемПоднять, транспорт)
+		}
+	}
+	if len(нечемПоднять) > 0 {
 		return nil, fmt.Errorf(
-			"мосты требуют транспорт %s, а он пока не поднимается — "+
-				"этого шага в приложении ещё нет; попробуйте обычные мосты без транспорта",
-			strings.Join(транспорты, ", "))
+			"мосты требуют транспорт %s, а эта сборка умеет только %s",
+			strings.Join(нечемПоднять, ", "), strings.Join(поддерживаемые, ", "))
 	}
 	return разобранные, nil
+}
+
+// поднятьТранспорты поднимает то, что заказано мостами, и возвращает их
+// адреса для torrc. Транспорты поднимаются ДО tor: их адреса нужно
+// подставить в конфиг, а порты они выбирают сами.
+func (s *Service) поднятьТранспорты(мосты []bridges.Bridge) ([]torrun.PTPlugin, error) {
+	нужные := bridges.Transports(мосты)
+	if len(нужные) == 0 {
+		return nil, nil
+	}
+	s.записать("Поднимаю транспорты: " + strings.Join(нужные, ", "))
+
+	плагины, err := s.настройки.Transports.Start(нужные, s.настройки.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("не поднялись транспорты: %w", err)
+	}
+	return плагины, nil
 }
 
 // Disconnect останавливает всё. Безопасен, когда ничего не запущено.
@@ -361,6 +406,8 @@ func (s *Service) свернуть() {
 		_ = клиент.Close()
 	}
 	_ = s.настройки.Runtime.Stop()
+	// Транспорты — после tor: пока tor жив, он может через них ходить.
+	_ = s.настройки.Transports.Stop()
 }
 
 func (s *Service) сменитьСостояние(состояние string) {

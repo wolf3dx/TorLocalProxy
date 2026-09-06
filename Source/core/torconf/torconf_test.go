@@ -95,10 +95,29 @@ func TestПутиСПробеламиВКавычках(t *testing.T) {
 	}
 }
 
-func TestПутьWindowsЭкранируется(t *testing.T) {
-	torrc := Build(Config{DataDir: `C:\MY DOC\d`, ControlFile: "/c", LogFile: "/l"})
-	if !strings.Contains(torrc, `DataDirectory "C:\\MY DOC\\d"`) {
-		t.Errorf("обратные слэши не экранированы:\n%s", torrc)
+// Оба правила ниже выяснены на живом tor 0.4.9.11 под Windows, и каждое
+// из них ломало запуск целиком, ещё до сети.
+//
+// Первое: экранированные обратные слэши тот не разворачивает, поэтому
+// пути приводятся к прямым — их он понимает везде.
+//
+// Второе: параметр Log берёт остаток строки сырым, и кавычки попадают в
+// имя файла — «Couldn't open file ...: Invalid argument». Поэтому путь
+// журнала идёт без кавычек, в отличие от остальных.
+func TestПутиВФормеКоторуюПонимаетTor(t *testing.T) {
+	torrc := Build(Config{
+		DataDir:     `C:\MY DOC\d`,
+		ControlFile: `C:\MY DOC\d\control_port`,
+		LogFile:     `C:\MY DOC\d\tor.log`,
+	})
+	if !strings.Contains(torrc, `DataDirectory "C:/MY DOC/d"`) {
+		t.Errorf("путь не приведён к прямым слэшам:\n%s", torrc)
+	}
+	if !strings.Contains(torrc, "Log notice file C:/MY DOC/d/tor.log\n") {
+		t.Errorf("путь журнала должен идти без кавычек:\n%s", torrc)
+	}
+	if strings.Contains(torrc, `\\`) {
+		t.Errorf("в torrc остались экранированные слэши:\n%s", torrc)
 	}
 }
 
