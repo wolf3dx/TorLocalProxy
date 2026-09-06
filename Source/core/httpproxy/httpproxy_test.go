@@ -206,7 +206,9 @@ func поднятьSocks(t *testing.T) *поддельныйSocks {
 	return с
 }
 
-func (с *поддельныйSocks) Адрес() string { return с.слушатель.Addr().String() }
+func (с *поддельныйSocks) Адрес() string {
+	return с.слушатель.Addr().String()
+}
 
 func (с *поддельныйSocks) Цели() []string {
 	с.мьютекс.Lock()

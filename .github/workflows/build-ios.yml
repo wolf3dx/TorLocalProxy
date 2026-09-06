@@ -12,8 +12,11 @@
 # трафик через Tor, и получить ответ, а не предположение.
 #
 # Мосты в проверке не участвуют: раннер стоит в дата-центре, где Tor не
-# заблокирован, и прямого подключения достаточно. Разбор мостов и obfs4
-# — общий с Android код, проверенный там на живой сети.
+# заблокирован, и прямого подключения достаточно. Разбор мостов и obfs4 —
+# общий с Android код, проверенный там на живой сети.
+#
+# Имена переменных оболочки только латиницей: русские буквы в именах
+# bash не принимает (проверено на своей шкуре в этом же проекте).
 
 name: Сборка iOS
 
@@ -29,7 +32,7 @@ jobs:
   simulator:
     name: Симулятор — собрать и проверить в работе
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Забрать исходники
@@ -53,77 +56,82 @@ jobs:
 
       - name: Поднять симулятор
         run: |
-          # Берём любое доступное устройство iPhone: точная модель нам
-          # безразлична, важен лишь работающий iOS.
-          УСТРОЙСТВО=$(xcrun simctl list devices available -j \
-            | python3 -c "
-import json,sys
-данные=json.load(sys.stdin)['devices']
-for среда, список in данные.items():
-    for у in список:
-        if 'iPhone' in у['name']:
-            print(у['udid']); raise SystemExit
-raise SystemExit('подходящего iPhone в симуляторе не нашлось')")
-          echo "устройство: $УСТРОЙСТВО"
-          echo "УСТРОЙСТВО=$УСТРОЙСТВО" >> "$GITHUB_ENV"
-          xcrun simctl boot "$УСТРОЙСТВО" || true
-          xcrun simctl bootstatus "$УСТРОЙСТВО"
+          # Модель нам безразлична, важен работающий iOS. jq на раннерах
+          # macOS есть из коробки.
+          device=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices[][] | select(.name | test("iPhone"))][0].udid')
+          if [ -z "$device" ] || [ "$device" = "null" ]; then
+            echo "подходящего iPhone в симуляторе не нашлось" >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "устройство: $device"
+          echo "DEVICE=$device" >> "$GITHUB_ENV"
+          xcrun simctl boot "$device" || true
+          xcrun simctl bootstatus "$device"
 
       - name: Установить и запустить
         working-directory: Source/app
         run: |
-          xcrun simctl install "$УСТРОЙСТВО" TorLocalProxy.app
+          xcrun simctl install "$DEVICE" TorLocalProxy.app
           # TORPROXY_AUTOCONNECT заставляет приложение подключиться само,
           # без нажатия кнопки: нажимать её в CI некому.
-          xcrun simctl launch --console-pty --setenv TORPROXY_AUTOCONNECT=1 \
-            "$УСТРОЙСТВО" com.vkandreevich.torlocalproxy > launch.log 2>&1 &
-          sleep 10
-          cat launch.log || true
+          xcrun simctl launch --setenv TORPROXY_AUTOCONNECT=1 \
+            "$DEVICE" com.vkandreevich.torlocalproxy
 
       - name: Дождаться прокси и спросить у сети
         run: |
-          # Порт 9050 поднимается сразу, а вот подключение к сети Tor
-          # через мосты и без них занимает от десятков секунд до минут.
-          for попытка in $(seq 1 30); do
+          # Порт поднимается почти сразу, а подключение к сети Tor
+          # занимает от десятков секунд до минут.
+          for try in $(seq 1 30); do
             if nc -z 127.0.0.1 9050 2>/dev/null; then
-              echo "порт 9050 слушает (попытка $попытка)"
+              echo "порт 9050 слушает (попытка $try)"
               break
             fi
             sleep 5
           done
 
-          ответ=""
-          for попытка in $(seq 1 24); do
-            ответ=$(curl -s --socks5-hostname 127.0.0.1:9050 --max-time 30 \
+          answer=""
+          for try in $(seq 1 24); do
+            answer=$(curl -s --socks5-hostname 127.0.0.1:9050 --max-time 30 \
               https://check.torproject.org/api/ip || true)
-            case "$ответ" in
-              *'"IsTor":true'*) echo "через SOCKS5: $ответ"; break ;;
+            case "$answer" in
+              *'"IsTor":true'*)
+                echo "через SOCKS5: $answer"
+                break
+                ;;
             esac
             sleep 10
           done
-          case "$ответ" in
+          case "$answer" in
             *'"IsTor":true'*) : ;;
-            *) echo "SOCKS5 через Tor не заработал, последний ответ: $ответ" >&2; exit 1 ;;
+            *)
+              echo "SOCKS5 через Tor не заработал, последний ответ: $answer" >&2
+              exit 1
+              ;;
           esac
 
           # HTTP-прокси — тот, что вписывают в настройки Wi-Fi на iPhone.
-          через_http=$(curl -s --proxy http://127.0.0.1:8118 --max-time 60 \
+          over_http=$(curl -s --proxy http://127.0.0.1:8118 --max-time 60 \
             https://check.torproject.org/api/ip || true)
-          echo "через HTTP: $через_http"
-          case "$через_http" in
+          echo "через HTTP: $over_http"
+          case "$over_http" in
             *'"IsTor":true'*) : ;;
-            *) echo "HTTP-прокси через Tor не заработал" >&2; exit 1 ;;
+            *)
+              echo "HTTP-прокси через Tor не заработал" >&2
+              exit 1
+              ;;
           esac
 
       - name: Журнал tor из симулятора
         if: always()
         run: |
-          КОРЕНЬ=$(xcrun simctl get_app_container "$УСТРОЙСТВО" \
+          root=$(xcrun simctl get_app_container "$DEVICE" \
             com.vkandreevich.torlocalproxy data 2>/dev/null || true)
-          echo "каталог приложения: $КОРЕНЬ"
-          if [ -n "$КОРЕНЬ" ]; then
-            find "$КОРЕНЬ" -name 'tor.log' -exec sh -c 'echo "== {}"; tail -40 "{}"' \;
-            find "$КОРЕНЬ" -name 'torrc' -exec sh -c 'echo "== {}"; cat "{}"' \;
+          echo "каталог приложения: $root"
+          if [ -n "$root" ]; then
+            find "$root" -name 'tor.log' -print -exec tail -40 {} \; || true
+            find "$root" -name 'torrc' -print -exec cat {} \; || true
           fi
 
       - name: Забрать сборку
@@ -131,20 +139,16 @@ raise SystemExit('подходящего iPhone в симуляторе не н�
         uses: actions/upload-artifact@v4
         with:
           name: TorLocalProxy-simulator
-          path: |
-            Source/app/TorLocalProxy.app
-            Source/app/launch.log
+          path: Source/app/TorLocalProxy.app
           if-no-files-found: warn
 
   device:
     name: iPhone — неподписанный .ipa
     runs-on: macos-latest
-    timeout-minutes: 45
-    # Собирается всегда, даже если проверка в симуляторе не прошла:
-    # неподписанный пакет всё равно нужен, чтобы поставить его на живой
-    # телефон и посмотреть на поведение в фоне — этого симулятор не
-    # покажет.
-    needs: []
+    timeout-minutes: 60
+    # Задание независимое: пакет нужен, даже если проверка в симуляторе
+    # не прошла, — чтобы поставить его на живой телефон и посмотреть на
+    # поведение в фоне, чего симулятор не покажет.
 
     steps:
       - name: Забрать исходники
