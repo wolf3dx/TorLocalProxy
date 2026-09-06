@@ -30,7 +30,13 @@ vendor/
 
 # Собранные приложения и снимки экрана
 *.apk
+*.apk.idsig
 *.aab
+.apk-work/
+*.keystore
+
+# tor от Guardian Project — качается скриптом сборки, в репозиторий не кладём
+Source/app/tor-android/
 
 # Мобильные сборки
 /android/build/
