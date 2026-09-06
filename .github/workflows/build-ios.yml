@@ -165,6 +165,12 @@ jobs:
     name: iPhone — неподписанный .ipa
     runs-on: macos-latest
     timeout-minutes: 60
+    # Право на запись нужно только для выкладки пакета в раздел
+    # выпусков: артефакты сборки качаются лишь с ключом, а файлы
+    # выпуска — обычной ссылкой, и это единственный способ забрать
+    # пакет на машину, где ключа нет.
+    permissions:
+      contents: write
     # Задание независимое: пакет нужен, даже если проверка в симуляторе
     # не прошла, — чтобы поставить его на живой телефон и посмотреть на
     # поведение в фоне, чего симулятор не покажет.
@@ -202,3 +208,23 @@ jobs:
           name: TorLocalProxy-ios-ipa
           path: Release/*.ipa
           if-no-files-found: warn
+
+      - name: Выложить .ipa в раздел выпусков
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pkg=$(ls Release/*.ipa 2>/dev/null | head -1)
+          if [ -z "$pkg" ]; then
+            echo "пакета нет — выкладывать нечего" >&2
+            exit 1
+          fi
+          # Метка одна на версию и переписывается при каждой сборке:
+          # в разделе выпусков должен лежать свежий пакет, а не свалка.
+          version=$(basename "$pkg" | sed 's/^TorLocalProxy-//; s/-ios\.ipa$//')
+          tag="ios-v$version"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          note="Неподписанный пакет. Ставится в обход App Store: Sideloadly"
+          note="$note под Windows, обычный Apple ID. Подпись живёт 7 дней."
+          note="$note Основной репозиторий — GitLab vkandreevich/TorLocalProxy."
+          gh release create "$tag" "$pkg"             --title "TorLocalProxy $version для iPhone"             --notes "$note"
+          gh release view "$tag" --json assets --jq '.assets[].url' 
