@@ -47,6 +47,12 @@ jobs:
       - name: Поставить fyne
         run: go install fyne.io/tools/cmd/fyne@latest
 
+      - name: Сертификат для сборки без учётной записи Apple
+        working-directory: Source/app
+        run: |
+          chmod +x ci-fake-cert.sh
+          ./ci-fake-cert.sh
+
       - name: Собрать под симулятор
         working-directory: Source/app
         run: |
@@ -162,6 +168,12 @@ jobs:
 
       - name: Поставить fyne
         run: go install fyne.io/tools/cmd/fyne@latest
+
+      - name: Сертификат для сборки без учётной записи Apple
+        working-directory: Source/app
+        run: |
+          chmod +x ci-fake-cert.sh
+          ./ci-fake-cert.sh
 
       - name: Собрать под устройство
         working-directory: Source/app

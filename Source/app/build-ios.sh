@@ -49,11 +49,23 @@ fi
 ./fetch-tor-ios.sh "$TARGET"
 
 # 2. Собираем приложение.
+#
+# fyne требует сертификат подписи в связке ключей даже для симулятора:
+# из него он берёт код команды разработчика, без которого не соберёт
+# проект Xcode вовсе. Настоящего сертификата у нас нет, поэтому в CI
+# подставляется самоподписанный, а сама подпись отключается через
+# xcconfig — этим занимается ci-fake-cert.sh. Имя сертификата приходит
+# в FYNE_CERT; без этой переменной fyne ищет обычный «iPhone Developer».
 echo "Собираю под $FYNE_TARGET..."
 rm -rf "$APP_NAME.app"
+if [ -n "$FYNE_CERT" ]; then
+  set -- --cert "$FYNE_CERT"
+else
+  set --
+fi
 fyne package --target "$FYNE_TARGET" \
   --app-version "$APP_VERSION" --app-build "$APP_BUILD" \
-  --icon Icon.png --app-id "$APP_ID" --name "$APP_NAME"
+  --icon Icon.png --app-id "$APP_ID" --name "$APP_NAME" "$@"
 
 APP="$APP_NAME.app"
 if [ ! -d "$APP" ]; then
