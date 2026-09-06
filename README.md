@@ -21,7 +21,8 @@ TorLocalProxy/
 │  ├─ go.work                  рабочее пространство: core + cmd/torproxy
 │  ├─ core/                    ядро; ничего не знает о UI и платформах
 │  │  ├─ bridges/             разбор строк мостов
-│  │  └─ torconf/             генерация torrc
+│  │  ├─ torconf/             генерация torrc
+│  │  └─ control/             control-протокол, события bootstrap
 │  ├─ cmd/torproxy/            десктопная команда
 │  └─ Prototype-Python/        рабочий прототип — источник для переноса
 │     ├─ tornode/              логика: мосты, torrc, control, HTTP-мост
@@ -61,7 +62,9 @@ Windows x64, Linux, macOS x86_64, macOS arm64, Android, iOS — правило 9
   проверка границы ядра.
 - ✅ Этап 1 — `core/bridges` и `core/torconf`: разбор письма с мостами и
   генерация `torrc`, 30 проверок.
-- ⬜ Этап 2 — control-протокол и события bootstrap.
+- ✅ Этап 2 — `core/control`: SAFECOOKIE, события bootstrap 0–100,
+  перевод фаз, обнаружение застревания.
+- ⬜ Этап 3 — запуск tor отдельным процессом.
 
 Как собрать и проверить — `CONTRIBUTING.md`.
 

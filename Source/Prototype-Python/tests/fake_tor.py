@@ -164,8 +164,12 @@ class ControlHandler(socketserver.StreamRequestHandler):
 
             if cmd == "PROTOCOLINFO":
                 cookie_path = os.path.join(STATE.datadir, "control_auth_cookie")
+                # Настоящий tor отдаёт путь как QuotedString: обратные слэши
+                # и кавычки внутри экранированы. На UNIX это ничего не меняет,
+                # а на Windows без экранирования строгий клиент путь отвергает.
+                quoted = cookie_path.replace("\\", "\\\\").replace('"', '\\"')
                 self.send('250-PROTOCOLINFO 1',
-                          f'250-AUTH METHODS=COOKIE,SAFECOOKIE COOKIEFILE="{cookie_path}"',
+                          f'250-AUTH METHODS=COOKIE,SAFECOOKIE COOKIEFILE="{quoted}"',
                           f'250-VERSION Tor="{VERSION}"',
                           '250 OK')
             elif cmd == "AUTHCHALLENGE":

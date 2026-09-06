@@ -42,6 +42,21 @@ go build -o ../dist/torproxy ./cmd/torproxy
 пока в проекте нет cgo. С этапа 8 (go-libtor) для сборок под каждую ОС
 понадобится родная машина или родной раннер.
 
+## Тесты против заглушки tor
+
+`go test` без флагов не требует ни сети, ни установленного tor. Всё, что
+требует, лежит за тегом сборки `integration` и гоняется против заглушки из
+прототипа — `Prototype-Python/tests/fake_tor.py`. Она изображает control-порт
+с SAFECOOKIE, шлёт события BOOTSTRAP от 0 до 100 и поднимает рабочий SOCKS5.
+
+```bash
+cd Source
+go test -tags integration -count=1 ./core/... ./cmd/torproxy/...
+```
+
+Нужен Python в `PATH` — больше ничего. Если его нет, тесты пропускаются, а не
+падают. На GitHub эти тесты идут отдельным заданием.
+
 ## Граница ядра
 
 `core` не импортирует ничего из `cmd`, `desktop`, `android`, `ios` — только

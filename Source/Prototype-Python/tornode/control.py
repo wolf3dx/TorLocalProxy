@@ -140,7 +140,21 @@ class ControlClient:
             if "METHODS=" in line:
                 methods = line.split("METHODS=", 1)[1].split()[0]
                 if 'COOKIEFILE="' in line:
-                    cookiefile = line.split('COOKIEFILE="', 1)[1].split('"', 1)[0]
+                    raw = line.split('COOKIEFILE="', 1)[1]
+                    # Значение — QuotedString: закрывающей считается кавычка,
+                    # перед которой нет обратного слэша.
+                    out, i = [], 0
+                    while i < len(raw):
+                        ch = raw[i]
+                        if ch == "\\" and i + 1 < len(raw):
+                            out.append(raw[i + 1])
+                            i += 2
+                            continue
+                        if ch == '"':
+                            break
+                        out.append(ch)
+                        i += 1
+                    cookiefile = "".join(out)
         cookiefile = self.cookie_path or cookiefile
 
         if self.password:

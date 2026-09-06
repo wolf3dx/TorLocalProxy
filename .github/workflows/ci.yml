@@ -87,9 +87,32 @@ jobs:
           working-directory: Source
           args: ${{ env.PKGS }}
 
+  integration:
+    name: Тесты против заглушки tor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            Source/**/go.mod
+            Source/**/go.sum
+
+      # Заглушка из прототипа (Prototype-Python/tests/fake_tor.py) изображает
+      # control-порт с SAFECOOKIE, события BOOTSTRAP 0 -> 100 и рабочий SOCKS5.
+      # Нужен только Python — ни сети, ни настоящего tor.
+      - name: Проверить Python
+        run: python3 --version
+
+      - name: go test -tags integration
+        working-directory: Source
+        run: go test -tags integration -count=1 ${{ env.PKGS }}
+
   build:
     name: Сборка ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: tests
+    needs: [tests, integration]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
