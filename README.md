@@ -22,7 +22,8 @@ TorLocalProxy/
 │  ├─ core/                    ядро; ничего не знает о UI и платформах
 │  │  ├─ bridges/             разбор строк мостов
 │  │  ├─ torconf/             генерация torrc
-│  │  └─ control/             control-протокол, события bootstrap
+│  │  ├─ control/             control-протокол, события bootstrap
+│  │  └─ torrun/              жизненный цикл tor: интерфейс + external
 │  ├─ cmd/torproxy/            десктопная команда
 │  └─ Prototype-Python/        рабочий прототип — источник для переноса
 │     ├─ tornode/              логика: мосты, torrc, control, HTTP-мост
@@ -64,7 +65,9 @@ Windows x64, Linux, macOS x86_64, macOS arm64, Android, iOS — правило 9
   генерация `torrc`, 30 проверок.
 - ✅ Этап 2 — `core/control`: SAFECOOKIE, события bootstrap 0–100,
   перевод фаз, обнаружение застревания.
-- ⬜ Этап 3 — запуск tor отдельным процессом.
+- ✅ Этап 3 — `core/torrun` и `external`: запуск tor отдельным процессом,
+  поиск бинарника, честная остановка.
+- ⬜ Этап 4 — транспорты через IPtProxy, в процессе.
 
 Как собрать и проверить — `CONTRIBUTING.md`.
 
