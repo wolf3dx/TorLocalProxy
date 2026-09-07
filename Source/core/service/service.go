@@ -59,6 +59,40 @@ const СтрокЖурнала = 500
 // СрокПодключения — сколько всего ждать подключения.
 const СрокПодключения = 3 * time.Minute
 
+// СрокПодключенияМедленных — то же для медленных транспортов.
+//
+// meek_lite и snowflake устроены так, что тянут первые данные через
+// чужое облако или через добровольца, и получение консенсуса у них
+// занимает минуты, а не секунды. С общим сроком в три минуты они
+// обрывались на 25 %, хотя работали: это поймано на эмуляторе, где
+// meek_lite дошёл до 25 % и был убит нашим же сторожем.
+const СрокПодключенияМедленных = 8 * time.Minute
+
+// СрокЗастояМедленных — сколько терпеть неподвижный процент у медленных
+// транспортов. У обычных хватает 90 секунд (control.StallTimeoutDefault):
+// если obfs4 не двинулся за это время, он и не двинется.
+const СрокЗастояМедленных = 4 * time.Minute
+
+// медленные — транспорты, которым нужны сроки подлиннее.
+var медленные = map[string]bool{
+	"meek_lite": true,
+	"snowflake": true,
+}
+
+// сроки выбирает сроки под то, чем именно подключаемся.
+//
+// Один срок на всех не годится: короткий обрывает медленные транспорты
+// на середине, длинный заставляет человека минутами смотреть на
+// заведомо мёртвый obfs4.
+func сроки(транспорты []string) (общий, застой time.Duration) {
+	for _, имя := range транспорты {
+		if медленные[имя] {
+			return СрокПодключенияМедленных, СрокЗастояМедленных
+		}
+	}
+	return СрокПодключения, 0
+}
+
 // Options — настройки службы.
 type Options struct {
 	// StateDir — каталог для состояния tor, журнала и сохранённых мостов.
@@ -88,16 +122,17 @@ type Options struct {
 type Service struct {
 	настройки Options
 
-	мьютекс   sync.Mutex
-	состояние string
-	процент   int
-	фаза      string
-	socks     string
-	http      *httpproxy.Server
-	журнал    []string
-	клиент    control.Client
-	отмена    context.CancelFunc
-	наблюдате Observer
+	мьютекс    sync.Mutex
+	состояние  string
+	процент    int
+	фаза       string
+	socks      string
+	срокЗастоя time.Duration
+	http       *httpproxy.Server
+	журнал     []string
+	клиент     control.Client
+	отмена     context.CancelFunc
+	наблюдате  Observer
 }
 
 // New создаёт службу. Ничего не запускает.
@@ -188,7 +223,12 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 		return err
 	}
 
-	ctx, отмена := context.WithTimeout(ctx, СрокПодключения)
+	общийСрок, срокЗастоя := сроки(bridges.Transports(мосты))
+	s.мьютекс.Lock()
+	s.срокЗастоя = срокЗастоя
+	s.мьютекс.Unlock()
+
+	ctx, отмена := context.WithTimeout(ctx, общийСрок)
 	s.мьютекс.Lock()
 	s.отмена = отмена
 	s.мьютекс.Unlock()
@@ -323,8 +363,13 @@ func (s *Service) следитьЗаПодключением(ctx context.Context
 		}
 	}()
 
+	s.мьютекс.Lock()
+	срокЗастоя := s.срокЗастоя
+	s.мьютекс.Unlock()
+
 	return control.Wait(ctx, дляОжидания, control.WaitOptions{
-		Timeout: СрокПодключения,
+		Timeout:      СрокПодключенияМедленных,
+		StallTimeout: срокЗастоя,
 	})
 }
 
