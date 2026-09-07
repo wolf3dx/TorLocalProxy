@@ -127,6 +127,7 @@ type Service struct {
 	процент    int
 	фаза       string
 	socks      string
+	прерывание bool
 	срокЗастоя time.Duration
 	http       *httpproxy.Server
 	журнал     []string
@@ -213,6 +214,7 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 	s.наблюдате = obs
 	s.журнал = nil
 	s.процент, s.фаза, s.socks = 0, "", ""
+	s.прерывание = false
 	s.мьютекс.Unlock()
 
 	s.сменитьСостояние(StateConnecting)
@@ -222,6 +224,74 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 		s.провал(err)
 		return err
 	}
+
+	// Мосты разбираются по типам, и типы пробуются по очереди, пока
+	// какой-нибудь не подключится. Это не удобство, а необходимость: на
+	// одной и той же сети obfs4 может быть заглушён, а webtunnel
+	// проходить, и заранее это не выяснить никак.
+	//
+	// Первым идёт тип, которым подключились в прошлый раз: перебирать
+	// заново — это минуты ожидания на пустом месте.
+	группы := bridges.GroupByTransport(мосты, s.LastTransport())
+	if len(группы) == 0 {
+		// Мостов нет вовсе — подключаемся напрямую. Одна «группа» без
+		// транспорта, чтобы дальше код был один и тот же.
+		группы = []bridges.Group{{}}
+	}
+
+	var последняя error
+	for номер, группа := range группы {
+		if len(группы) > 1 {
+			s.записать(fmt.Sprintf("Попытка %d из %d: мосты типа %s (%d шт.)",
+				номер+1, len(группы), названиеТипа(группа.Transport), len(группа.Bridges)))
+		}
+
+		err := s.подключитьГруппу(ctx, группа)
+		if err == nil {
+			s.запомнитьТранспорт(группа.Transport)
+			return nil
+		}
+		последняя = err
+
+		// Прервал человек — перебирать дальше незачем, он этого не
+		// просил. Отличать обязательно: иначе нажатие «Отключить»
+		// превращалось бы в перебор всех типов подряд.
+		s.мьютекс.Lock()
+		прервано := s.прерывание
+		s.мьютекс.Unlock()
+		if прервано || ctx.Err() != nil {
+			break
+		}
+
+		s.свернуть()
+		if номер+1 < len(группы) {
+			s.записать(fmt.Sprintf("Тип %s не подошёл: %v. Пробую следующий.",
+				названиеТипа(группа.Transport), err))
+			// Проценты начнутся заново — предупреждаем, иначе полоса,
+			// уехавшая назад, выглядит поломкой.
+			s.сообщитьШаг(0, "Пробую другой тип мостов")
+		}
+	}
+
+	s.провал(последняя)
+	return последняя
+}
+
+// названиеТипа — как тип моста называется в журнале.
+func названиеТипа(транспорт string) string {
+	if транспорт == "" || транспорт == bridges.БезТранспорта {
+		return "без транспорта"
+	}
+	return транспорт
+}
+
+// подключитьГруппу — одна попытка: поднять транспорт этого типа,
+// запустить tor только с этими мостами и дождаться готовности.
+//
+// Возвращает ошибку и НЕ переводит службу в состояние отказа: решает
+// вызывающий, есть ли ещё что пробовать.
+func (s *Service) подключитьГруппу(ctx context.Context, группа bridges.Group) error {
+	мосты := группа.Bridges
 
 	общийСрок, срокЗастоя := сроки(bridges.Transports(мосты))
 	s.мьютекс.Lock()
@@ -236,7 +306,6 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 
 	плагины, err := s.поднятьТранспорты(мосты)
 	if err != nil {
-		s.провал(err)
 		return err
 	}
 
@@ -248,15 +317,12 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 		PTPlugins: плагины,
 	})
 	if err != nil {
-		s.провал(fmt.Errorf("не удалось запустить tor: %w", err))
-		return err
+		return fmt.Errorf("не удалось запустить tor: %w", err)
 	}
 	s.записать("control-порт: " + конец.ControlAddress)
 
 	клиент, err := s.настройки.Dial(ctx, конец.ControlAddress, control.Options{})
 	if err != nil {
-		s.свернуть()
-		s.провал(err)
 		return err
 	}
 	s.мьютекс.Lock()
@@ -264,8 +330,6 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 	s.мьютекс.Unlock()
 
 	if err := клиент.Authenticate(ctx); err != nil {
-		s.свернуть()
-		s.провал(err)
 		return err
 	}
 	// Жизнь tor привязывается к этому соединению: оборвётся оно —
@@ -276,8 +340,6 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 
 	события, err := клиент.WatchBootstrap(ctx)
 	if err != nil {
-		s.свернуть()
-		s.провал(err)
 		return err
 	}
 
@@ -285,8 +347,6 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 	// нужен каждый шаг, а не только итог.
 	итог, err := s.следитьЗаПодключением(ctx, события)
 	if err != nil {
-		s.свернуть()
-		s.провал(err)
 		return err
 	}
 
@@ -295,8 +355,6 @@ func (s *Service) Connect(ctx context.Context, bridgesText string, obs Observer)
 		// Порт выбирал сам tor — спросить можно только у него.
 		адрес, err = клиент.SocksAddress(ctx)
 		if err != nil {
-			s.свернуть()
-			s.провал(err)
 			return err
 		}
 	}
@@ -432,6 +490,13 @@ func (s *Service) поднятьТранспорты(мосты []bridges.Bridge
 
 // Disconnect останавливает всё. Безопасен, когда ничего не запущено.
 func (s *Service) Disconnect() error {
+	// Отметка о том, что остановку попросил человек. Без неё перебор
+	// типов мостов принял бы нажатие «Отключить» за неудачу очередного
+	// типа и полез бы пробовать следующий.
+	s.мьютекс.Lock()
+	s.прерывание = true
+	s.мьютекс.Unlock()
+
 	s.свернуть()
 	s.мьютекс.Lock()
 	s.процент, s.фаза, s.socks = 0, "", ""
@@ -454,6 +519,49 @@ func (s *Service) NewIdentity(ctx context.Context) error {
 	}
 	s.записать("Запрошена новая цепочка")
 	return nil
+}
+
+// ФайлПрошлогоТипа — где хранится тип мостов, которым подключились в
+// прошлый раз.
+const ФайлПрошлогоТипа = "last-transport.txt"
+
+// LastTransport возвращает тип мостов, которым удалось подключиться в
+// прошлый раз. Пусто, если такого ещё не было.
+//
+// Нужен, чтобы не перебирать типы заново при каждом запуске: на
+// медленных транспортах перебор — это минуты ожидания.
+func (s *Service) LastTransport() string {
+	данные, err := os.ReadFile(filepath.Join(s.настройки.StateDir, ФайлПрошлогоТипа))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(данные))
+}
+
+// запомнитьТранспорт сохраняет удачный тип. Ошибка записи не важна:
+// без этой памяти приложение просто снова переберёт типы.
+func (s *Service) запомнитьТранспорт(транспорт string) {
+	if транспорт == "" {
+		транспорт = bridges.БезТранспорта
+	}
+	путь := filepath.Join(s.настройки.StateDir, ФайлПрошлогоТипа)
+	if err := os.WriteFile(путь, []byte(транспорт), 0o600); err != nil {
+		s.записать("не запомнился удачный тип мостов: " + err.Error())
+	}
+}
+
+// сообщитьШаг отправляет наблюдателю шаг подключения от себя, а не от
+// tor. Нужно на стыке попыток: проценты начинаются заново, и человек
+// должен понимать, почему полоса уехала назад.
+func (s *Service) сообщитьШаг(процент int, фаза string) {
+	s.мьютекс.Lock()
+	s.процент, s.фаза = процент, фаза
+	наблюдатель := s.наблюдате
+	s.мьютекс.Unlock()
+
+	if наблюдатель != nil {
+		наблюдатель.OnBootstrap(процент, фаза)
+	}
 }
 
 // SaveBridges сохраняет текст мостов рядом с состоянием, чтобы при
