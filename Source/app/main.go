@@ -29,7 +29,6 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -193,16 +192,23 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	})
 	э.цепочка.Disable()
 
-	содержимое := container.NewVBox(
+	// Плашки прокручиваются, а кнопки управления прибиты к низу окна.
+	//
+	// Раньше кнопки лежали внутри прокрутки, и это было терпимо, пока
+	// плашек было четыре. С появлением плашки HTTP «Подключить» ушла за
+	// край экрана телефона: главную кнопку приложения приходилось
+	// искать прокруткой. Теперь она на месте всегда.
+	плашки := container.NewVBox(
 		плашкаСостояния,
 		плашкаАдреса,
 		плашкаHTTP,
 		э.плашкаМостов,
 		журнал,
-		layout.NewSpacer(),
-		container.NewGridWithColumns(2, э.подключение, э.цепочка),
 	)
-	э.корень = container.NewPadded(container.NewVScroll(содержимое))
+	управление := container.NewGridWithColumns(2, э.подключение, э.цепочка)
+	э.корень = container.NewPadded(container.NewBorder(
+		nil, управление, nil, nil, container.NewVScroll(плашки),
+	))
 	return э
 }
 
@@ -219,7 +225,12 @@ func (э *экран) обновитьПодписьМостов() {
 	case len(годные) == 0:
 		э.плашкаМостов.SetSubTitle("строки не разобраны — проверьте текст")
 	default:
-		э.плашкаМостов.SetSubTitle(fmt.Sprintf("разобрано мостов: %d", len(годные)))
+		// Транспорт называется не для красоты: когда подключение не
+		// идёт, первый вопрос — какой транспорт пробуем. На мобильных
+		// сетях obfs4 узнаётся DPI, и человек должен видеть, что у него
+		// вписан именно он.
+		э.плашкаМостов.SetSubTitle(fmt.Sprintf("мостов: %d (%s)",
+			len(годные), strings.Join(bridges.Transports(годные), ", ")))
 	}
 }
 

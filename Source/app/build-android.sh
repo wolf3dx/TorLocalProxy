@@ -46,7 +46,20 @@ if [ ! -f "tor-android/$ABI/libtor.so" ]; then
 fi
 
 # 2. Собираем APK.
+#
+# -checklinkname=0 нужен из-за github.com/wlynxg/anet — библиотеки,
+# которую притаскивает snowflake через pion. Она добирается до
+# внутренностей стандартной библиотеки (net.zoneCache) через linkname:
+# на Android штатный net.Interfaces() без разрешений не работает, и
+# обойти это иначе нельзя. Начиная с Go 1.23 компоновщик такие ссылки
+# запрещает, и сборка падает на «invalid reference to net.zoneCache».
+# Флаг снимает запрет — иначе snowflake под Android не собрать, а без
+# него на мобильных сетях подключаться нередко нечем.
+#
+# Передаётся через GOFLAGS: своего ключа для ldflags у fyne нет, а
+# go build эту переменную читает.
 echo "Собираю APK под android/$ARCH..."
+GOFLAGS="-ldflags=-checklinkname=0" \
 fyne package --target "android/$ARCH" \
   --icon Icon.png --app-id com.vkandreevich.torlocalproxy --name TorLocalProxy
 
