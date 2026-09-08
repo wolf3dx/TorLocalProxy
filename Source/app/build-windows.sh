@@ -19,8 +19,8 @@
 # Запуск:  ./build-windows.sh
 set -e
 
-APP_VERSION=0.0.5
-APP_BUILD=5
+APP_VERSION=0.0.6
+APP_BUILD=6
 
 cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
@@ -100,4 +100,17 @@ with zipfile.ZipFile(архив, 'w', zipfile.ZIP_DEFLATED) as z:
 " "$BUNDLE" "$ROOT/Release/$BUNDLE.zip"
 rm -rf "$BUNDLE"
 
-echo "Готово: Release/$BUNDLE.zip"
+# 5. Контрольная сумма — её проверяет встроенное обновление перед заменой
+# работающего приложения. Формат «сумма  имя», как у sha256sum.
+echo "Считаю sha256..."
+python - "$ROOT/Release/$BUNDLE.zip" > "$ROOT/Release/$BUNDLE.zip.sha256" <<'PY'
+import hashlib, sys, os
+путь = sys.argv[1]
+h = hashlib.sha256()
+with open(путь, 'rb') as f:
+    for кусок in iter(lambda: f.read(1 << 20), b''):
+        h.update(кусок)
+print(h.hexdigest() + "  " + os.path.basename(путь))
+PY
+
+echo "Готово: Release/$BUNDLE.zip (+ .sha256)"
