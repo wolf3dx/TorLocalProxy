@@ -12,14 +12,7 @@ package service
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -89,8 +82,10 @@ func TestЖиваяСвязьЧерезМосты(t *testing.T) {
 	t.Logf("прокси SOCKS5: %s — это и вписывается в чужие приложения", адрес)
 
 	// Главная проверка: через прокси действительно ходит трафик, и
-	// выходит он из сети Tor.
-	ip, черезTor, err := проверитьВыход(ctx, адрес)
+	// выходит он из сети Tor. Идёт через тот же CheckExitIP, что стоит за
+	// кнопкой «Проверить IP» в приложении, — тест проверяет ровно то, чем
+	// пользуется человек.
+	ip, черезTor, err := s.CheckExitIP(ctx)
 	if err != nil {
 		t.Fatalf("через прокси не удалось выйти в сеть: %v", err)
 	}
@@ -110,122 +105,4 @@ func TestЖиваяСвязьЧерезМосты(t *testing.T) {
 	if s.State() != StateIdle {
 		t.Errorf("после отключения состояние %q", s.State())
 	}
-}
-
-// проверитьВыход спрашивает у check.torproject.org, кто мы снаружи.
-// Ходит строго через наш прокси.
-func проверитьВыход(ctx context.Context, адресSocks string) (string, bool, error) {
-	клиент := &http.Client{
-		Timeout: 90 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, цель string) (net.Conn, error) {
-				return черезSocks5(ctx, адресSocks, цель)
-			},
-		},
-	}
-
-	запрос, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://check.torproject.org/api/ip", nil)
-	if err != nil {
-		return "", false, err
-	}
-	ответ, err := клиент.Do(запрос)
-	if err != nil {
-		return "", false, err
-	}
-	defer ответ.Body.Close()
-
-	тело, err := io.ReadAll(io.LimitReader(ответ.Body, 4096))
-	if err != nil {
-		return "", false, err
-	}
-	var разобранное struct {
-		IsTor bool   `json:"IsTor"`
-		IP    string `json:"IP"`
-	}
-	if err := json.Unmarshal(тело, &разобранное); err != nil {
-		return "", false, fmt.Errorf("непонятный ответ: %s", strings.TrimSpace(string(тело)))
-	}
-	return разобранное.IP, разобранное.IsTor, nil
-}
-
-// черезSocks5 открывает соединение до цели через SOCKS5 без
-// аутентификации. Имя хоста уходит на сторону прокси нетронутым: решать
-// его локально нельзя, DNS-запрос ушёл бы мимо Tor и выдал, куда мы идём.
-func черезSocks5(ctx context.Context, прокси, цель string) (net.Conn, error) {
-	соединение, err := (&net.Dialer{}).DialContext(ctx, "tcp", прокси)
-	if err != nil {
-		return nil, err
-	}
-	успех := false
-	defer func() {
-		if !успех {
-			_ = соединение.Close()
-		}
-	}()
-	if срок, есть := ctx.Deadline(); есть {
-		_ = соединение.SetDeadline(срок)
-	}
-
-	// Приветствие: версия 5, один способ — без аутентификации.
-	if _, err := соединение.Write([]byte{0x05, 0x01, 0x00}); err != nil {
-		return nil, err
-	}
-	ответ := make([]byte, 2)
-	if _, err := io.ReadFull(соединение, ответ); err != nil {
-		return nil, err
-	}
-	if ответ[0] != 0x05 || ответ[1] != 0x00 {
-		return nil, fmt.Errorf("прокси не принял приветствие: %v", ответ)
-	}
-
-	хост, порт, err := net.SplitHostPort(цель)
-	if err != nil {
-		return nil, err
-	}
-	номер, err := net.LookupPort("tcp", порт)
-	if err != nil {
-		return nil, err
-	}
-	if len(хост) > 255 {
-		return nil, fmt.Errorf("слишком длинное имя хоста: %q", хост)
-	}
-
-	// Адрес передаётся типом 0x03 — доменное имя.
-	запрос := []byte{0x05, 0x01, 0x00, 0x03, byte(len(хост))}
-	запрос = append(запрос, хост...)
-	запрос = binary.BigEndian.AppendUint16(запрос, uint16(номер))
-	if _, err := соединение.Write(запрос); err != nil {
-		return nil, err
-	}
-
-	голова := make([]byte, 4)
-	if _, err := io.ReadFull(соединение, голова); err != nil {
-		return nil, err
-	}
-	if голова[1] != 0x00 {
-		return nil, fmt.Errorf("прокси отказал, код %d", голова[1])
-	}
-	// Дочитываем адрес, который вернул прокси: его длина зависит от типа.
-	switch голова[3] {
-	case 0x01:
-		_, err = io.ReadFull(соединение, make([]byte, 4+2))
-	case 0x03:
-		длина := make([]byte, 1)
-		if _, err = io.ReadFull(соединение, длина); err == nil {
-			_, err = io.ReadFull(соединение, make([]byte, int(длина[0])+2))
-		}
-	case 0x04:
-		_, err = io.ReadFull(соединение, make([]byte, 16+2))
-	default:
-		err = fmt.Errorf("непонятный тип адреса в ответе: %d", голова[3])
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	// Дальше соединением распоряжается вызывающий, срок снимаем.
-	_ = соединение.SetDeadline(time.Time{})
-	успех = true
-	return соединение, nil
 }
