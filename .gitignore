@@ -50,6 +50,11 @@ Release/Архив/
 # tor от Guardian Project — качается скриптом сборки, в репозиторий не кладём
 Source/app/tor-android/
 
+# tor.exe для Windows — вход сборки (из Tor Browser, TOR_BINARY или
+# tor-windows/). Кладётся рядом с приложением при упаковке, в репозиторий
+# не идёт.
+Source/app/tor-windows/
+
 # tor для iOS — тоже качается при сборке (рамка iCepa, около 140 МБ).
 # В репозитории лежит только скрипт, который её приносит.
 Source/app/.tor-ios-cache/
