@@ -19,8 +19,8 @@
 set -e
 
 TOR_VERSION=0.4.9.11
-APP_VERSION=0.0.5
-APP_BUILD=5
+APP_VERSION=0.0.6
+APP_BUILD=6
 ARCH=${1:-amd64}
 
 case "$ARCH" in
@@ -120,4 +120,16 @@ mkdir -p ../../Release
 mv TorLocalProxy.apk "../../Release/TorLocalProxy-$APP_VERSION-$ABI.apk"
 rm -f TorLocalProxy.apk.idsig
 
-echo "Готово: Release/TorLocalProxy-$APP_VERSION-$ABI.apk"
+# 7. Контрольная сумма — её проверяет встроенное обновление. Формат
+# «сумма  имя», как у sha256sum.
+python - "../../Release/TorLocalProxy-$APP_VERSION-$ABI.apk" > "../../Release/TorLocalProxy-$APP_VERSION-$ABI.apk.sha256" <<'PY'
+import hashlib, sys, os
+путь = sys.argv[1]
+h = hashlib.sha256()
+with open(путь, 'rb') as f:
+    for кусок in iter(lambda: f.read(1 << 20), b''):
+        h.update(кусок)
+print(h.hexdigest() + "  " + os.path.basename(путь))
+PY
+
+echo "Готово: Release/TorLocalProxy-$APP_VERSION-$ABI.apk (+ .sha256)"
