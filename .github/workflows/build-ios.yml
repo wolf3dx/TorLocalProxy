@@ -227,4 +227,33 @@ jobs:
           note="$note под Windows, обычный Apple ID. Подпись живёт 7 дней."
           note="$note Основной репозиторий — GitLab vkandreevich/TorLocalProxy."
           gh release create "$tag" "$pkg"             --title "TorLocalProxy $version для iPhone"             --notes "$note"
-          gh release view "$tag" --json assets --jq '.assets[].url' 
+          gh release view "$tag" --json assets --jq '.assets[].url'
+
+      - name: Обновить источник AltStore
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Источник AltStore — JSON по стабильной ссылке. Пользователь
+          # добавляет её в AltStore/SideStore один раз, дальше установка и
+          # авто-обновления идут оттуда, без ручного Sideloadly. Файл
+          # переписывается каждой сборкой, метка выпуска (altstore) одна.
+          pkg=$(ls Release/*.ipa 2>/dev/null | head -1)
+          if [ -z "$pkg" ]; then
+            echo "нет .ipa — источник не обновляю" >&2
+            exit 1
+          fi
+          version=$(basename "$pkg" | sed 's/^TorLocalProxy-//; s/-ios\.ipa$//')
+          size=$(stat -f%z "$pkg")
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/ios-v${version}/$(basename "$pkg")"
+          export VERSION="$version" DOWNLOAD_URL="$url" SIZE="$size" DATE="$(date +%F)"
+          chmod +x Source/app/altstore-source.sh
+          Source/app/altstore-source.sh > apps.json
+          echo "--- apps.json ---"; cat apps.json
+          gh release delete altstore --yes 2>/dev/null || true
+          note="Источник AltStore для TorLocalProxy. Добавьте ссылку на"
+          note="$note apps.json как источник в AltStore или SideStore —"
+          note="$note оттуда установка и авто-обновления без Sideloadly."
+          gh release create altstore apps.json \
+            --title "Источник AltStore — TorLocalProxy" \
+            --notes "$note" --latest=false
+          echo "Источник: https://github.com/${GITHUB_REPOSITORY}/releases/download/altstore/apps.json"
