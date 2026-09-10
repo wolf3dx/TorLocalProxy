@@ -213,7 +213,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pkg=$(ls Release/*.ipa 2>/dev/null | head -1)
+          pkg=$(ls -t Release/*.ipa 2>/dev/null | head -1)
           if [ -z "$pkg" ]; then
             echo "пакета нет — выкладывать нечего" >&2
             exit 1
@@ -237,7 +237,7 @@ jobs:
           # добавляет её в AltStore/SideStore один раз, дальше установка и
           # авто-обновления идут оттуда, без ручного Sideloadly. Файл
           # переписывается каждой сборкой, метка выпуска (altstore) одна.
-          pkg=$(ls Release/*.ipa 2>/dev/null | head -1)
+          pkg=$(ls -t Release/*.ipa 2>/dev/null | head -1)
           if [ -z "$pkg" ]; then
             echo "нет .ipa — источник не обновляю" >&2
             exit 1
