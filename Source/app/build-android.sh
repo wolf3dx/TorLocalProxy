@@ -36,6 +36,13 @@ esac
 
 cd "$(dirname "$0")"
 
+# 0. Синхронизируем версию в манифест. Fyne берёт наш AndroidManifest.xml
+# как есть и --app-version не переопределяет, поэтому версию правим здесь
+# из APP_VERSION/APP_BUILD — иначе APK молча выходит со старым номером, и
+# ни встроенное обновление, ни установщик не увидят его новым.
+sed -i "s/android:versionCode=\"[0-9]*\"/android:versionCode=\"$APP_BUILD\"/" AndroidManifest.xml
+sed -i "s/android:versionName=\"[^\"]*\"/android:versionName=\"$APP_VERSION\"/" AndroidManifest.xml
+
 # 1. Забираем tor, если его ещё нет.
 if [ ! -f "tor-android/$ABI/libtor.so" ]; then
   echo "Скачиваю tor $TOR_VERSION от Guardian Project..."
