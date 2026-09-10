@@ -1,0 +1,91 @@
+# Сборка приложения под macOS.
+#
+# Как и iOS, собирается только на macOS — своего Mac у нас нет, поэтому
+# единственная площадка это macos-latest раннер GitHub. Основной
+# репозиторий на GitLab, сюда код попадает только ради сборки под Apple.
+#
+# На выходе .dmg с приложением; tor вложен внутрь .app вместе со своими
+# зависимостями (см. build-macos.sh). Пакет неподписанный по-настоящему
+# (только ad-hoc): Developer ID и нотаризация требуют платной учётной
+# записи Apple. Поэтому при первом запуске — «Открыть» из меню правой
+# кнопки, это снимает карантин Gatekeeper.
+#
+# Имена переменных оболочки только латиницей: bash не принимает русские.
+
+name: Сборка macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Source/**'
+      - '.github/workflows/build-macos.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: macOS — приложение и .dmg
+    runs-on: macos-latest
+    timeout-minutes: 60
+    # Запись нужна для выкладки .dmg в раздел выпусков: артефакт сборки
+    # качается лишь по ключу, а файл выпуска — обычной ссылкой, откуда
+    # его и берёт встроенное обновление.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Поставить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: Source/*/go.sum
+
+      - name: Поставить fyne
+        run: go install fyne.io/tools/cmd/fyne@latest
+
+      - name: Поставить tor и dylibbundler
+        run: brew install tor dylibbundler
+
+      - name: Собрать .dmg
+        working-directory: Source/app
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          chmod +x build-macos.sh
+          ./build-macos.sh
+
+      - name: Забрать сборку
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TorLocalProxy-macos-dmg
+          path: |
+            Release/*.dmg
+            Release/*.dmg.sha256
+          if-no-files-found: warn
+
+      - name: Выложить .dmg в раздел выпусков
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pkg=$(ls Release/*-macos.dmg 2>/dev/null | head -1)
+          if [ -z "$pkg" ]; then
+            echo "пакета нет — выкладывать нечего" >&2
+            exit 1
+          fi
+          sum="$pkg.sha256"
+          # Метка одна на версию и переписывается при каждой сборке:
+          # в разделе выпусков должен лежать свежий пакет, а не свалка.
+          version=$(basename "$pkg" | sed 's/^TorLocalProxy-//; s/-macos\.dmg$//')
+          tag="macos-v$version"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          note="Приложение для macOS. tor внутри пакета, ставить ничего не"
+          note="$note нужно. Пакет без подписи Apple: при первом запуске"
+          note="$note откройте его через меню правой кнопки → «Открыть»."
+          note="$note Основной репозиторий — GitLab vkandreevich/TorLocalProxy."
+          gh release create "$tag" "$pkg" "$sum" \
+            --title "TorLocalProxy $version для macOS" \
+            --notes "$note"
+          gh release view "$tag" --json assets --jq '.assets[].url'
