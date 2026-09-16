@@ -14,7 +14,7 @@ from reportlab.platypus import (Image, ListFlowable, ListItem, PageBreak,
                                 Paragraph, SimpleDocTemplate, Spacer, Table,
                                 TableStyle)
 
-ВЕРСИЯ = "0.0.6"
+ВЕРСИЯ = "0.0.7"
 ШРИФТЫ = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 КОРЕНЬ = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ВЫХОД = os.path.join(КОРЕНЬ, "Release", f"TorLocalProxy-{ВЕРСИЯ}-manual.pdf")

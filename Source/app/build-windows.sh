@@ -19,8 +19,8 @@
 # Запуск:  ./build-windows.sh
 set -e
 
-APP_VERSION=0.0.6
-APP_BUILD=6
+APP_VERSION=0.0.7
+APP_BUILD=7
 
 cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
