@@ -119,19 +119,22 @@ func main() {
 
 // экран держит виджеты, которые обновляются по ходу подключения.
 type экран struct {
-	корень       fyne.CanvasObject
-	состояние    *widget.Label
-	фаза         *widget.Label
-	полоса       *widget.ProgressBar
-	поля         map[string]*widget.Entry
-	стопкаПолей  *fyne.Container
-	выборТипа    *widget.Select
-	текущийТип   string
-	адрес        *widget.Label
-	адресHTTP    *widget.Label
-	плашкаМостов *widget.Card
-	подключение  *widget.Button
-	цепочка      *widget.Button
+	корень      fyne.CanvasObject
+	состояние   *widget.Label
+	фаза        *widget.Label
+	полоса      *widget.ProgressBar
+	поля        map[string]*полеМостов
+	стопкаПолей *fyne.Container
+	// прокруткаПлашек нужна, чтобы подкрутить список к полю ввода,
+	// когда его закрывает экранная клавиатура.
+	прокруткаПлашек *container.Scroll
+	выборТипа       *widget.Select
+	текущийТип      string
+	адрес           *widget.Label
+	адресHTTP       *widget.Label
+	плашкаМостов    *widget.Card
+	подключение     *widget.Button
+	цепочка         *widget.Button
 
 	// Баннер обновления. Скрыт, пока проверка не найдёт версию новее:
 	// тогда наверху окна появляется строка с версией и кнопкой.
@@ -260,8 +263,9 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 		журнал,
 	)
 	управление := container.NewGridWithColumns(2, э.подключение, э.цепочка)
+	э.прокруткаПлашек = container.NewVScroll(плашки)
 	э.корень = container.NewPadded(container.NewBorder(
-		nil, управление, nil, nil, container.NewVScroll(плашки),
+		nil, управление, nil, nil, э.прокруткаПлашек,
 	))
 	return э
 }
