@@ -56,7 +56,8 @@ const ПортHTTP = 8118
 
 func main() {
 	приложение := app.NewWithID(ИдПриложения)
-	приложение.Settings().SetTheme(theme.DarkTheme())
+	// Тема — сохранённый оттенок «Луковицы» (по умолчанию «Тёплая ночь»).
+	применитьТему(приложение, текущаяПалитра(приложение).ключ)
 
 	окно := приложение.NewWindow("TorLocalProxy")
 
@@ -137,11 +138,11 @@ type экран struct {
 	заблокировано    bool
 	кнопкаБлокировки *widget.Button
 	кнопкиПравки     []*widget.Button
-	адрес           *widget.Label
-	адресHTTP       *widget.Label
-	плашкаМостов    *widget.Card
-	подключение     *widget.Button
-	цепочка         *widget.Button
+	адрес            *widget.Label
+	адресHTTP        *widget.Label
+	плашкаМостов     *widget.Card
+	коло             *колоКнопка
+	цепочка          *widget.Button
 
 	// Баннер обновления. Скрыт, пока проверка не найдёт версию новее:
 	// тогда наверху окна появляется строка с версией и кнопкой.
@@ -163,6 +164,22 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	э.баннерОбн = container.NewBorder(nil, nil, nil, э.кнопкаОбн, э.меткаОбн)
 	э.баннерОбн.Hide()
 
+	// ---- Шапка: имя приложения и переключатель темы ------------------
+	// Кнопка по кругу меняет оттенок «Луковицы» (Тёплая ночь → Янтарный
+	// день → Терракота) и запоминает выбор. Текущий оттенок — на кнопке.
+	var кнопкаТемы *widget.Button
+	обновитьПодписьТемы := func() { кнопкаТемы.SetText(текущаяПалитра(fyne.CurrentApp()).имя) }
+	кнопкаТемы = widget.NewButtonWithIcon("", theme.ColorPaletteIcon(), func() {
+		след := следующаяПалитра(текущаяПалитра(fyne.CurrentApp()).ключ)
+		применитьТему(fyne.CurrentApp(), след.ключ)
+		обновитьПодписьТемы()
+	})
+	кнопкаТемы.Importance = widget.LowImportance
+	обновитьПодписьТемы()
+	шапка := container.NewBorder(nil, nil,
+		widget.NewLabelWithStyle("TorLocalProxy", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		кнопкаТемы)
+
 	// ---- Плашка 1: состояние подключения ----------------------------
 	э.состояние = widget.NewLabelWithStyle("ВЫКЛЮЧЕНО", fyne.TextAlignCenter,
 		fyne.TextStyle{Bold: true})
@@ -170,9 +187,13 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	э.полоса = widget.NewProgressBar()
 	э.полоса.Hide()
 
-	плашкаСостояния := widget.NewCard("Состояние", "", container.NewVBox(
-		э.состояние, э.полоса, э.фаза,
-	))
+	// Герой «Луковицы»: кольца и есть кнопка подключения.
+	э.коло = новоеКоло(func() { э.переключить(окно, служба) })
+	герой := container.NewVBox(
+		container.NewPadded(container.NewCenter(э.коло)),
+		э.состояние,
+		э.фаза,
+	)
 
 	// ---- Плашка 4: адрес прокси -------------------------------------
 	// Идёт второй сверху не случайно: это то, ради чего приложение и
@@ -252,10 +273,6 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	})
 
 	// ---- Управление --------------------------------------------------
-	э.подключение = widget.NewButtonWithIcon("Подключить", theme.MediaPlayIcon(), nil)
-	э.подключение.Importance = widget.HighImportance
-	э.подключение.OnTapped = func() { э.переключить(окно, служба) }
-
 	э.цепочка = widget.NewButtonWithIcon("Новая цепочка", theme.ViewRefreshIcon(), func() {
 		if err := служба.NewIdentity(context.Background()); err != nil {
 			сообщить(окно, err.Error())
@@ -272,15 +289,16 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	// край экрана телефона: главную кнопку приложения приходилось
 	// искать прокруткой. Теперь она на месте всегда.
 	плашки := container.NewVBox(
+		шапка,
 		э.баннерОбн,
-		плашкаСостояния,
+		герой,
 		плашкаАдреса,
 		плашкаHTTP,
 		э.плашкаМостов,
-		проверитьIP,
-		журнал,
+		container.NewGridWithColumns(2, проверитьIP, журнал),
 	)
-	управление := container.NewGridWithColumns(2, э.подключение, э.цепочка)
+	// Подключение переехало на кольцо — внизу только «Новая цепочка».
+	управление := container.NewPadded(э.цепочка)
 	э.прокруткаПлашек = container.NewVScroll(плашки)
 	э.корень = container.NewPadded(container.NewBorder(
 		nil, управление, nil, nil, э.прокруткаПлашек,
@@ -330,8 +348,7 @@ type наблюдатель struct {
 
 func (н наблюдатель) OnBootstrap(percent int, phase string) {
 	fyne.Do(func() {
-		н.экран.полоса.Show()
-		н.экран.полоса.SetValue(float64(percent) / 100)
+		н.экран.коло.установить(service.StateConnecting, percent)
 		н.экран.фаза.SetText(fmt.Sprintf("%d%% — %s", percent, phase))
 	})
 }
@@ -353,10 +370,8 @@ func (н наблюдатель) OnState(state string) {
 		switch state {
 		case service.StateConnecting:
 			н.экран.состояние.SetText("ПОДКЛЮЧЕНИЕ")
-			н.экран.подключение.SetText("Прервать")
-			н.экран.подключение.SetIcon(theme.MediaStopIcon())
+			н.экран.коло.установить(service.StateConnecting, н.экран.коло.процент)
 			н.экран.цепочка.Disable()
-			н.экран.полоса.Show()
 
 		case service.StateConnected:
 			н.экран.состояние.SetText("ВКЛЮЧЕНО")
@@ -369,28 +384,22 @@ func (н наблюдатель) OnState(state string) {
 			} else {
 				н.экран.адресHTTP.SetText("не поднялся — см. журнал")
 			}
-			н.экран.подключение.SetText("Отключить")
-			н.экран.подключение.SetIcon(theme.MediaStopIcon())
+			н.экран.коло.установить(service.StateConnected, 100)
 			н.экран.цепочка.Enable()
-			н.экран.полоса.Hide()
 
 		case service.StateFailed:
 			н.экран.состояние.SetText("ОШИБКА")
 			н.экран.фаза.SetText("Подробности — в журнале")
-			н.экран.подключение.SetText("Подключить")
-			н.экран.подключение.SetIcon(theme.MediaPlayIcon())
+			н.экран.коло.установить(service.StateFailed, 0)
 			н.экран.цепочка.Disable()
-			н.экран.полоса.Hide()
 			н.экран.адрес.SetText("—")
 			н.экран.адресHTTP.SetText("—")
 
 		default:
 			н.экран.состояние.SetText("ВЫКЛЮЧЕНО")
 			н.экран.фаза.SetText("Не подключено")
-			н.экран.подключение.SetText("Подключить")
-			н.экран.подключение.SetIcon(theme.MediaPlayIcon())
+			н.экран.коло.установить(service.StateIdle, 0)
 			н.экран.цепочка.Disable()
-			н.экран.полоса.Hide()
 			н.экран.адрес.SetText("—")
 			н.экран.адресHTTP.SetText("—")
 		}
