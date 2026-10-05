@@ -81,10 +81,11 @@ func (к *колоКнопка) Tapped(_ *fyne.PointEvent) {
 func (к *колоКнопка) CreateRenderer() fyne.WidgetRenderer {
 	кольцо := func() *canvas.Circle { c := &canvas.Circle{}; c.StrokeWidth = 3; return c }
 	r := &кольцоRenderer{
-		к:      к,
-		кольца: []*canvas.Circle{кольцо(), кольцо(), кольцо()},
-		слои:   []*canvas.Circle{{}, {}, {}},
-		центр:  canvas.NewText("Tor", color.White),
+		к:        к,
+		кольца:   []*canvas.Circle{кольцо(), кольцо(), кольцо()},
+		свечение: &canvas.Circle{},
+		слои:     []*canvas.Circle{{}, {}, {}},
+		центр:    canvas.NewText("Tor", color.White),
 	}
 	r.центр.Alignment = fyne.TextAlignCenter
 	r.центр.TextStyle = fyne.TextStyle{Bold: true}
@@ -94,19 +95,21 @@ func (к *колоКнопка) CreateRenderer() fyne.WidgetRenderer {
 }
 
 type кольцоRenderer struct {
-	к      *колоКнопка
-	кольца []*canvas.Circle // внешние слои-обводки
-	слои   []*canvas.Circle // ядро: от края к центру, светлеет
-	центр  *canvas.Text
+	к        *колоКнопка
+	кольца   []*canvas.Circle // внешние слои-обводки
+	свечение *canvas.Circle   // мягкий ореол под ядром
+	слои     []*canvas.Circle // ядро: от края к центру, светлеет
+	центр    *canvas.Text
 }
 
 func (r *кольцоRenderer) MinSize() fyne.Size { return fyne.NewSize(156, 156) }
 
 func (r *кольцоRenderer) Objects() []fyne.CanvasObject {
-	об := make([]fyne.CanvasObject, 0, len(r.кольца)+len(r.слои)+1)
+	об := make([]fyne.CanvasObject, 0, len(r.кольца)+len(r.слои)+2)
 	for _, к := range r.кольца {
 		об = append(об, к)
 	}
+	об = append(об, r.свечение)
 	for _, с := range r.слои {
 		об = append(об, с)
 	}
@@ -127,11 +130,15 @@ func (r *кольцоRenderer) Layout(размер fyne.Size) {
 		c.Resize(fyne.NewSize(d-2*отступ, d-2*отступ))
 	}
 	for i, кольцо := range r.кольца {
-		круг(кольцо, d*float32(i)*0.11)
+		круг(кольцо, d*float32(i)*0.10)
 	}
-	// Ядро: три вложенных круга дают градиент от края к центру.
+	// Ореол под ядром — мягкий свет, из-за которого ядро «горит».
+	круг(r.свечение, d*0.19)
+	// Ядро занимает 55% диаметра: его край почти касается внутреннего
+	// кольца, и «Луковица» читается плотной, как в макете. Три вложенных
+	// круга дают градиент от края к центру.
 	for i, слой := range r.слои {
-		круг(слой, d*(0.32+float32(i)*0.045))
+		круг(слой, d*(0.225+float32(i)*0.035))
 	}
 
 	h := r.центр.MinSize().Height
@@ -171,6 +178,15 @@ func (r *кольцоRenderer) Refresh() {
 			яркость = основа + float64(i)*0x18
 		}
 		кольцо.StrokeColor = прозр(акцент, ограничить(яркость))
+	}
+
+	// Ореол: горит только когда активно, и дышит вместе с волной.
+	r.свечение.StrokeWidth = 0
+	r.свечение.StrokeColor = color.Transparent
+	if активно {
+		r.свечение.FillColor = прозр(акцент, ограничить(0x26+0x1a*r.волна(0)))
+	} else {
+		r.свечение.FillColor = color.Transparent
 	}
 
 	// Ядро: к центру светлее, и по нему тоже идёт перелив.

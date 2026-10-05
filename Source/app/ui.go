@@ -197,3 +197,175 @@ func (r *точкаRenderer) Refresh() {
 	r.кружок.FillColor = тема.Color(theme.ColorNameSuccess, в)
 	canvas.Refresh(r.кружок)
 }
+
+// ----------------------------------------------------- адресная строка --
+
+// адреснаяСтрока — карточка адреса из макета: мелкая приглушённая
+// подпись, под ней крупный моноширинный адрес и иконка копирования
+// справа. Стандартный Label так не выглядит: у него свой размер шрифта
+// и набивка, поэтому текст рисуем сами.
+type адреснаяСтрока struct {
+	widget.BaseWidget
+	подпись        string
+	значение       string
+	приКопировании func()
+}
+
+func новаяАдреснаяСтрока(подпись string, приКопировании func()) *адреснаяСтрока {
+	а := &адреснаяСтрока{подпись: подпись, значение: "—", приКопировании: приКопировании}
+	а.ExtendBaseWidget(а)
+	return а
+}
+
+// SetText меняет адрес. Имя как у Label — чтобы вызывающий код не менялся.
+func (а *адреснаяСтрока) SetText(значение string) {
+	а.значение = значение
+	а.Refresh()
+}
+
+func (а *адреснаяСтрока) CreateRenderer() fyne.WidgetRenderer {
+	фон := canvas.NewRectangle(color.Transparent)
+	фон.CornerRadius = 14
+	фон.StrokeWidth = 1
+	метка := canvas.NewText(а.подпись, color.White)
+	метка.TextSize = 11
+	значение := canvas.NewText(а.значение, color.White)
+	значение.TextSize = 17
+	значение.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
+	кнопка := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), а.приКопировании)
+	кнопка.Importance = widget.LowImportance
+	r := &адреснаяRenderer{а: а, фон: фон, метка: метка, значение: значение, кнопка: кнопка}
+	r.Refresh()
+	return r
+}
+
+type адреснаяRenderer struct {
+	а        *адреснаяСтрока
+	фон      *canvas.Rectangle
+	метка    *canvas.Text
+	значение *canvas.Text
+	кнопка   *widget.Button
+}
+
+func (r *адреснаяRenderer) отступ() float32 { return theme.Padding() * 2.5 }
+
+func (r *адреснаяRenderer) Layout(размер fyne.Size) {
+	о := r.отступ()
+	r.фон.Resize(размер)
+
+	кн := r.кнопка.MinSize()
+	r.кнопка.Resize(кн)
+	r.кнопка.Move(fyne.NewPos(размер.Width-о-кн.Width, (размер.Height-кн.Height)/2))
+
+	r.метка.Move(fyne.NewPos(о, о))
+	r.метка.Resize(fyne.NewSize(размер.Width-2*о-кн.Width, r.метка.MinSize().Height))
+	r.значение.Move(fyne.NewPos(о, о+r.метка.MinSize().Height+2))
+	r.значение.Resize(fyne.NewSize(размер.Width-2*о-кн.Width, r.значение.MinSize().Height))
+}
+
+func (r *адреснаяRenderer) MinSize() fyne.Size {
+	о := r.отступ()
+	в := r.метка.MinSize().Height + 2 + r.значение.MinSize().Height
+	ш := r.значение.MinSize().Width + r.кнопка.MinSize().Width
+	return fyne.NewSize(ш+2*о, в+2*о)
+}
+
+func (r *адреснаяRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.фон, r.метка, r.значение, r.кнопка}
+}
+
+func (r *адреснаяRenderer) Destroy() {}
+
+func (r *адреснаяRenderer) Refresh() {
+	тема := fyne.CurrentApp().Settings().Theme()
+	в := fyne.CurrentApp().Settings().ThemeVariant()
+	r.фон.FillColor = тема.Color(theme.ColorNameInputBackground, в)
+	r.фон.StrokeColor = тема.Color(theme.ColorNameSeparator, в)
+	r.метка.Text = r.а.подпись
+	r.метка.Color = тема.Color(theme.ColorNamePlaceHolder, в)
+	r.значение.Text = r.а.значение
+	r.значение.Color = тема.Color(theme.ColorNameForeground, в)
+	canvas.Refresh(r.фон)
+	canvas.Refresh(r.метка)
+	canvas.Refresh(r.значение)
+}
+
+// --------------------------------------------------- контурная кнопка --
+
+// контурнаяКнопка — кнопка «обводкой», как «Новая цепочка» в макете:
+// прозрачная внутри, тонкая рамка акцентом. У Fyne такой нет: его
+// кнопки либо залиты, либо совсем без рамки.
+type контурнаяКнопка struct {
+	widget.BaseWidget
+	текст     string
+	выключена bool
+	приТапе   func()
+}
+
+func новаяКонтурнаяКнопка(текст string, приТапе func()) *контурнаяКнопка {
+	к := &контурнаяКнопка{текст: текст, приТапе: приТапе}
+	к.ExtendBaseWidget(к)
+	return к
+}
+
+func (к *контурнаяКнопка) Enable()  { к.выключена = false; к.Refresh() }
+func (к *контурнаяКнопка) Disable() { к.выключена = true; к.Refresh() }
+
+func (к *контурнаяКнопка) Tapped(_ *fyne.PointEvent) {
+	if к.выключена || к.приТапе == nil {
+		return
+	}
+	к.приТапе()
+}
+
+func (к *контурнаяКнопка) CreateRenderer() fyne.WidgetRenderer {
+	фон := canvas.NewRectangle(color.Transparent)
+	фон.CornerRadius = 14
+	фон.StrokeWidth = 1
+	подпись := canvas.NewText(к.текст, color.White)
+	подпись.TextSize = 14
+	подпись.TextStyle = fyne.TextStyle{Bold: true}
+	подпись.Alignment = fyne.TextAlignCenter
+	r := &контурнаяRenderer{к: к, фон: фон, подпись: подпись}
+	r.Refresh()
+	return r
+}
+
+type контурнаяRenderer struct {
+	к       *контурнаяКнопка
+	фон     *canvas.Rectangle
+	подпись *canvas.Text
+}
+
+func (r *контурнаяRenderer) Layout(размер fyne.Size) {
+	r.фон.Resize(размер)
+	h := r.подпись.MinSize().Height
+	r.подпись.Resize(fyne.NewSize(размер.Width, h))
+	r.подпись.Move(fyne.NewPos(0, (размер.Height-h)/2))
+}
+
+func (r *контурнаяRenderer) MinSize() fyne.Size {
+	м := r.подпись.MinSize()
+	return fyne.NewSize(м.Width+theme.Padding()*8, м.Height+theme.Padding()*5)
+}
+
+func (r *контурнаяRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.фон, r.подпись}
+}
+
+func (r *контурнаяRenderer) Destroy() {}
+
+func (r *контурнаяRenderer) Refresh() {
+	тема := fyne.CurrentApp().Settings().Theme()
+	в := fyne.CurrentApp().Settings().ThemeVariant()
+	цвет := тема.Color(theme.ColorNamePrimary, в)
+	if r.к.выключена {
+		цвет = тема.Color(theme.ColorNameDisabled, в)
+	}
+	r.фон.FillColor = color.Transparent
+	r.фон.StrokeColor = прозр(цвет, 0x66)
+	r.подпись.Text = r.к.текст
+	r.подпись.Color = цвет
+	canvas.Refresh(r.фон)
+	canvas.Refresh(r.подпись)
+}

@@ -33,6 +33,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"gitlab.com/vkandreevich/torlocalproxy/core"
 	"gitlab.com/vkandreevich/torlocalproxy/core/service"
 )
 
@@ -138,8 +139,8 @@ type экран struct {
 	заблокировано    bool
 	кнопкаБлокировки *widget.Button
 	кнопкиПравки     []*widget.Button
-	адрес            *widget.Label
-	адресHTTP        *widget.Label
+	адрес            *адреснаяСтрока
+	адресHTTP        *адреснаяСтрока
 	плашкаМостов     *widget.Card
 	// Чип «мосты · тип · N» на главном экране: открывает экран мостов.
 	чипМостов   *чип
@@ -147,7 +148,7 @@ type экран struct {
 	// Зелёная точка рядом с подписью состояния — видна, когда включено.
 	точкаСост *точка
 	коло      *колоКнопка
-	цепочка   *widget.Button
+	цепочка   *контурнаяКнопка
 
 	// Баннер обновления. Скрыт, пока проверка не найдёт версию новее:
 	// тогда наверху окна появляется строка с версией и кнопкой.
@@ -172,18 +173,15 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	// ---- Шапка: имя приложения и переключатель темы ------------------
 	// Кнопка по кругу меняет оттенок «Луковицы» (Тёплая ночь → Янтарный
 	// день → Терракота) и запоминает выбор. Текущий оттенок — на кнопке.
-	var кнопкаТемы *widget.Button
-	обновитьПодписьТемы := func() { кнопкаТемы.SetText(текущаяПалитра(fyne.CurrentApp()).имя) }
-	кнопкаТемы = widget.NewButtonWithIcon("", theme.ColorPaletteIcon(), func() {
+	кнопкаТемы := widget.NewButtonWithIcon("", theme.ColorPaletteIcon(), func() {
 		след := следующаяПалитра(текущаяПалитра(fyne.CurrentApp()).ключ)
 		применитьТему(fyne.CurrentApp(), след.ключ)
-		обновитьПодписьТемы()
 	})
 	кнопкаТемы.Importance = widget.LowImportance
-	обновитьПодписьТемы()
+	версия := widget.NewLabelWithStyle(core.Version, fyne.TextAlignTrailing, fyne.TextStyle{})
 	шапка := container.NewBorder(nil, nil,
 		widget.NewLabelWithStyle("TorLocalProxy", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		кнопкаТемы)
+		container.NewHBox(версия, кнопкаТемы))
 
 	// ---- Плашка 1: состояние подключения ----------------------------
 	э.состояние = widget.NewLabelWithStyle("ВЫКЛЮЧЕНО", fyne.TextAlignCenter,
@@ -206,25 +204,14 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	// Идёт второй сверху не случайно: это то, ради чего приложение и
 	// нужно. Пользователь возвращается сюда каждый раз, когда настраивает
 	// очередную программу.
-	// Карточки адресов — компактные, как в макете: мелкая подпись,
-	// адрес моноширинным и иконка копирования справа.
-	карточкаАдреса := func(подпись string, значение *widget.Label, копия func()) fyne.CanvasObject {
-		метка := widget.NewLabelWithStyle(подпись, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-		кнопка := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), копия)
-		кнопка.Importance = widget.LowImportance
-		return новаяКарточка(container.NewBorder(nil, nil, nil, кнопка,
-			container.NewVBox(метка, значение)))
-	}
-
-	э.адрес = widget.NewLabelWithStyle("—", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+	// Адреса — своей строкой: мелкая подпись, крупный моноширинный
+	// адрес и иконка копирования справа, как в макете.
+	э.адрес = новаяАдреснаяСтрока("SOCKS5", func() { скопировать(окно, э.адрес.значение) })
 
 	// Второй адрес — для тех, кто SOCKS5 не умеет. Таких много: у
 	// многих программ в настройках только HTTP-прокси, а на iPhone
 	// системные настройки Wi-Fi знают исключительно его.
-	э.адресHTTP = widget.NewLabelWithStyle("—", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
-
-	плашкаАдреса := карточкаАдреса("SOCKS5", э.адрес, func() { скопировать(окно, э.адрес.Text) })
-	плашкаHTTP := карточкаАдреса("HTTP", э.адресHTTP, func() { скопировать(окно, э.адресHTTP.Text) })
+	э.адресHTTP = новаяАдреснаяСтрока("HTTP", func() { скопировать(окно, э.адресHTTP.значение) })
 
 	// ---- Плашка 2: мосты --------------------------------------------
 	//
@@ -289,7 +276,7 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	})
 
 	// ---- Управление --------------------------------------------------
-	э.цепочка = widget.NewButtonWithIcon("Новая цепочка", theme.ViewRefreshIcon(), func() {
+	э.цепочка = новаяКонтурнаяКнопка("Новая цепочка", func() {
 		if err := служба.NewIdentity(context.Background()); err != nil {
 			сообщить(окно, err.Error())
 			return
@@ -310,10 +297,9 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 		шапка,
 		э.баннерОбн,
 		герой,
-		плашкаАдреса,
-		плашкаHTTP,
+		э.адрес,
+		э.адресHTTP,
 		container.NewHBox(э.чипМостов),
-		container.NewGridWithColumns(2, проверитьIP, журнал),
 	)
 	// Подключение переехало на кольцо — внизу только «Новая цепочка».
 	управление := container.NewPadded(э.цепочка)
@@ -329,7 +315,10 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 	шапкаМостов := container.NewBorder(nil, nil, назад, nil,
 		widget.NewLabelWithStyle("Мосты", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}))
 	// Эту прокрутку подкручивает экранная клавиатура: поля мостов здесь.
-	э.прокруткаПлашек = container.NewVScroll(container.NewVBox(э.плашкаМостов))
+	э.прокруткаПлашек = container.NewVScroll(container.NewVBox(
+		э.плашкаМостов,
+		container.NewGridWithColumns(2, проверитьIP, журнал),
+	))
 	э.корнеМостов = container.NewPadded(container.NewBorder(
 		шапкаМостов, nil, nil, nil, э.прокруткаПлашек,
 	))
