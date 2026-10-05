@@ -142,10 +142,12 @@ type экран struct {
 	адресHTTP        *widget.Label
 	плашкаМостов     *widget.Card
 	// Чип «мосты · тип · N» на главном экране: открывает экран мостов.
-	чипМостов   *widget.Button
+	чипМостов   *чип
 	корнеМостов fyne.CanvasObject
-	коло        *колоКнопка
-	цепочка     *widget.Button
+	// Зелёная точка рядом с подписью состояния — видна, когда включено.
+	точкаСост *точка
+	коло      *колоКнопка
+	цепочка   *widget.Button
 
 	// Баннер обновления. Скрыт, пока проверка не найдёт версию новее:
 	// тогда наверху окна появляется строка с версией и кнопкой.
@@ -192,33 +194,37 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 
 	// Герой «Луковицы»: кольца и есть кнопка подключения.
 	э.коло = новоеКоло(func() { э.переключить(окно, служба) })
+	э.точкаСост = новаяТочка()
+	э.точкаСост.Hide() // зажигается, когда подключено
 	герой := container.NewVBox(
 		container.NewPadded(container.NewCenter(э.коло)),
 		э.состояние,
-		э.фаза,
+		container.NewCenter(container.NewHBox(э.точкаСост, э.фаза)),
 	)
 
 	// ---- Плашка 4: адрес прокси -------------------------------------
 	// Идёт второй сверху не случайно: это то, ради чего приложение и
 	// нужно. Пользователь возвращается сюда каждый раз, когда настраивает
 	// очередную программу.
-	э.адрес = widget.NewLabelWithStyle("—", fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
-	копировать := widget.NewButtonWithIcon("Копировать", theme.ContentCopyIcon(), func() {
-		скопировать(окно, э.адрес.Text)
-	})
+	// Карточки адресов — компактные, как в макете: мелкая подпись,
+	// адрес моноширинным и иконка копирования справа.
+	карточкаАдреса := func(подпись string, значение *widget.Label, копия func()) fyne.CanvasObject {
+		метка := widget.NewLabelWithStyle(подпись, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		кнопка := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), копия)
+		кнопка.Importance = widget.LowImportance
+		return новаяКарточка(container.NewBorder(nil, nil, nil, кнопка,
+			container.NewVBox(метка, значение)))
+	}
+
+	э.адрес = widget.NewLabelWithStyle("—", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 
 	// Второй адрес — для тех, кто SOCKS5 не умеет. Таких много: у
 	// многих программ в настройках только HTTP-прокси, а на iPhone
 	// системные настройки Wi-Fi знают исключительно его.
-	э.адресHTTP = widget.NewLabelWithStyle("—", fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
-	копироватьHTTP := widget.NewButtonWithIcon("Копировать", theme.ContentCopyIcon(), func() {
-		скопировать(окно, э.адресHTTP.Text)
-	})
+	э.адресHTTP = widget.NewLabelWithStyle("—", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 
-	плашкаАдреса := widget.NewCard("Прокси SOCKS5", "вписать в настройки приложения",
-		container.NewVBox(э.адрес, копировать))
-	плашкаHTTP := widget.NewCard("Прокси HTTP", "если программа не умеет SOCKS5",
-		container.NewVBox(э.адресHTTP, копироватьHTTP))
+	плашкаАдреса := карточкаАдреса("SOCKS5", э.адрес, func() { скопировать(окно, э.адрес.Text) })
+	плашкаHTTP := карточкаАдреса("HTTP", э.адресHTTP, func() { скопировать(окно, э.адресHTTP.Text) })
 
 	// ---- Плашка 2: мосты --------------------------------------------
 	//
@@ -258,12 +264,11 @@ func собратьЭкран(окно fyne.Window, служба *service.Servic
 		кнопки,
 	))
 	// Чип мостов на главном: подпись ставит обновитьПодписи.
-	э.чипМостов = widget.NewButton("мосты — не заданы", func() {
+	э.чипМостов = новыйЧип("мосты — не заданы", func() {
 		if э.корнеМостов != nil {
 			окно.SetContent(э.корнеМостов)
 		}
 	})
-	э.чипМостов.Importance = widget.LowImportance
 
 	э.обновитьПодписи()
 	// Свежий запуск с пустыми полями — открыто, чтобы сразу вписать мосты.
@@ -396,6 +401,7 @@ func (н наблюдатель) OnState(state string) {
 		case service.StateConnecting:
 			н.экран.состояние.SetText("ПОДКЛЮЧЕНИЕ")
 			н.экран.коло.установить(service.StateConnecting, н.экран.коло.процент)
+			н.экран.точкаСост.Hide()
 			н.экран.цепочка.Disable()
 
 		case service.StateConnected:
@@ -410,12 +416,14 @@ func (н наблюдатель) OnState(state string) {
 				н.экран.адресHTTP.SetText("не поднялся — см. журнал")
 			}
 			н.экран.коло.установить(service.StateConnected, 100)
+			н.экран.точкаСост.Show()
 			н.экран.цепочка.Enable()
 
 		case service.StateFailed:
 			н.экран.состояние.SetText("ОШИБКА")
 			н.экран.фаза.SetText("Подробности — в журнале")
 			н.экран.коло.установить(service.StateFailed, 0)
+			н.экран.точкаСост.Hide()
 			н.экран.цепочка.Disable()
 			н.экран.адрес.SetText("—")
 			н.экран.адресHTTP.SetText("—")
@@ -424,6 +432,7 @@ func (н наблюдатель) OnState(state string) {
 			н.экран.состояние.SetText("ВЫКЛЮЧЕНО")
 			н.экран.фаза.SetText("Не подключено")
 			н.экран.коло.установить(service.StateIdle, 0)
+			н.экран.точкаСост.Hide()
 			н.экран.цепочка.Disable()
 			н.экран.адрес.SetText("—")
 			н.экран.адресHTTP.SetText("—")
