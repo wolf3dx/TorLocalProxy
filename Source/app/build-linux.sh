@@ -205,8 +205,10 @@ rm -rf "$DEB" "$BUNDLE"
 # 7. Контрольные суммы — их проверяет встроенное обновление перед
 # заменой. Формат «сумма  имя», как у sha256sum.
 echo "Считаю sha256..."
-for пакет in "$ROOT/Release/$BUNDLE.tar.gz" "$ROOT/Release/$BUNDLE.deb"; do
-  ( cd "$(dirname "$пакет")" && sha256sum "$(basename "$пакет")" > "$(basename "$пакет").sha256" )
+# Имя переменной только латиницей: в Ubuntu /bin/sh это dash, и
+# кириллическое имя он не принимает вовсе («Bad for loop variable»).
+for pkg in "$ROOT/Release/$BUNDLE.tar.gz" "$ROOT/Release/$BUNDLE.deb"; do
+  ( cd "$(dirname "$pkg")" && sha256sum "$(basename "$pkg")" > "$(basename "$pkg").sha256" )
 done
 
 echo "Готово: Release/$BUNDLE.tar.gz и Release/$BUNDLE.deb (+ .sha256)"
