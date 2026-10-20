@@ -32,6 +32,15 @@
 #      подмена их чужими копиями ломает запуск надёжнее, чем их
 #      отсутствие.
 #
+# Что нужно в системе, где эта сборка идёт:
+#
+#   gcc pkg-config patchelf dpkg-dev tor
+#   libgl1-mesa-dev xorg-dev libxkbcommon-dev
+#   libwayland-dev wayland-protocols libwayland-bin libdecor-0-dev libegl-dev
+#
+# Заголовки обеих оконных подсистем, X11 и Wayland, нужны вместе: glfw в
+# Fyne 2.8 собирает их разом, а не ту, что выбрана тегом сборки.
+#
 # Запуск:  ./build-linux.sh
 set -e
 
