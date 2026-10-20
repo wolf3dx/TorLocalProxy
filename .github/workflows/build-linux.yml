@@ -1,0 +1,127 @@
+# Сборка приложения под Linux.
+#
+# Собирается только на Linux: Fyne тянет OpenGL и X11 через cgo. Своей
+# Linux-машины у нас нет, поэтому площадка та же, что у Apple, — раннеры
+# GitHub. Основной репозиторий на GitLab, сюда код попадает ради сборок.
+#
+# Архитектур две, и каждая собирается на своём железе: кросс-сборка с
+# cgo потребовала бы чужого набора системных библиотек. Раннер
+# ubuntu-24.04-arm бесплатен для открытых репозиториев — этот открыт.
+#
+# Раннер нарочно ubuntu-22.04, а не latest: собранное на новой системе
+# требует glibc не старше той, на которой собрано, и пакет, собранный на
+# 24.04, не запустился бы на Debian 12 и Ubuntu 22.04. Берём систему
+# постарше — она охватывает больше машин.
+#
+# Выпуск создаётся отдельной работой, после обеих сборок: обе клали бы
+# файлы в одну метку и затирали друг друга.
+#
+# Имена переменных оболочки только латиницей: bash не принимает русские.
+
+name: Сборка Linux
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Source/**'
+      - '.github/workflows/build-linux.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Linux — ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Поставить Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: Source/*/go.sum
+
+      # Fyne собирается с cgo и требует заголовков OpenGL, X11 и звука.
+      # tor — тот, что уйдёт в поставку; patchelf переписывает ему пути
+      # к библиотекам.
+      - name: Поставить сборочное окружение
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc pkg-config patchelf dpkg-dev tor \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev
+
+      - name: Собрать пакеты
+        working-directory: Source/app
+        run: |
+          chmod +x build-linux.sh
+          ./build-linux.sh
+
+      - name: Забрать сборку
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TorLocalProxy-linux-${{ matrix.arch }}
+          path: |
+            Release/*-linux-${{ matrix.arch }}.tar.gz
+            Release/*-linux-${{ matrix.arch }}.deb
+            Release/*-linux-${{ matrix.arch }}.*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Выпуск
+    needs: build
+    runs-on: ubuntu-latest
+    # Запись нужна для выкладки пакетов в раздел выпусков: артефакт
+    # сборки качается лишь по ключу, а файл выпуска — обычной ссылкой,
+    # откуда его и берёт встроенное обновление.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Забрать собранное
+        uses: actions/download-artifact@v4
+        with:
+          path: собранное
+
+      - name: Выложить пакеты в раздел выпусков
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p Release
+          find собранное -type f -exec cp {} Release/ \;
+          ls -l Release
+
+          pkg=$(ls Release/*-linux-x86_64.tar.gz 2>/dev/null | head -1)
+          if [ -z "$pkg" ]; then
+            echo "пакетов нет — выкладывать нечего" >&2
+            exit 1
+          fi
+          version=$(basename "$pkg" | sed 's/^TorLocalProxy-//; s/-linux-x86_64\.tar\.gz$//')
+          tag="linux-v$version"
+
+          # Метка одна на версию и переписывается при каждой сборке: в
+          # разделе выпусков должен лежать свежий пакет, а не свалка.
+          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          note="Приложение для Linux, x86_64 и arm64. tor в комплекте,"
+          note="$note ставить его отдельно не нужно."
+          note="$note .deb — обычная установка с ярлыком в меню,"
+          note="$note .tar.gz — распаковал и запустил."
+          note="$note Собрано на Ubuntu 22.04: нужен glibc не старше её."
+          note="$note Основной репозиторий — GitLab vkandreevich/TorLocalProxy."
+          gh release create "$tag" Release/*-linux-*.tar.gz Release/*-linux-*.deb Release/*.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "TorLocalProxy $version для Linux" \
+            --notes "$note"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'

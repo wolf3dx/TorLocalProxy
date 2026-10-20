@@ -54,6 +54,11 @@ Release/Архив/
 Release/*.ipa
 Release/*.dmg
 
+# Linux-пакеты — то же самое: их собирает CI на раннерах GitHub (cgo
+# требует самой Linux-системы) и кладёт в раздел выпусков.
+Release/*.tar.gz
+Release/*.deb
+
 # tor от Guardian Project — качается скриптом сборки, в репозиторий не кладём
 Source/app/tor-android/
 

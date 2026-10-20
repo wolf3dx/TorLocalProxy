@@ -4,7 +4,10 @@ package main
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 
 	"fyne.io/fyne/v2"
 
@@ -13,8 +16,8 @@ import (
 )
 
 // источникОбновлений выбирает канал по системе сборки. Apple-платформы
-// (iOS, macOS) собирает CI на Mac и кладёт на GitHub; Android — на
-// основной GitLab. Обычный Linux своего канала пока не имеет.
+// (iOS, macOS) и Linux собирает CI на GitHub, туда же кладёт пакеты;
+// Android — на основной GitLab.
 func источникОбновлений() update.Source {
 	switch runtime.GOOS {
 	case "android":
@@ -42,9 +45,38 @@ func источникОбновлений() update.Source {
 			Kind: update.GitHub, Owner: "wolf3dx", Repo: "TorLocalProxy",
 			TagPrefix: "macos-v", AssetSuffix: ".dmg",
 		}
+	case "linux":
+		return update.Source{
+			Kind: update.GitHub, Owner: "wolf3dx", Repo: "TorLocalProxy",
+			TagPrefix: "linux-v", AssetSuffix: суффиксLinux(),
+		}
 	default:
 		return update.Source{}
 	}
+}
+
+// суффиксLinux выбирает, какой из двух пакетов предлагать: тот же, из
+// какого приложение и поставлено.
+//
+// Пакетов на архитектуру два — .deb и портативный .tar.gz, — и подсунуть
+// человеку чужой значило бы сломать ему установку: поставивший .deb
+// получил бы папку, которую надо распаковывать руками, а распаковавший
+// архив — пакет, который ставится совсем в другое место.
+//
+// Отличить одно от другого можно по тому, где лежим мы сами: .deb
+// кладёт приложение в /opt (см. build-linux.sh), архив распаковывают
+// куда угодно.
+func суффиксLinux() string {
+	арх := "x86_64"
+	if runtime.GOARCH == "arm64" {
+		арх = "arm64"
+	}
+	вид := ".tar.gz"
+	if путь, err := os.Executable(); err == nil &&
+		strings.HasPrefix(filepath.ToSlash(путь), "/opt/TorLocalProxy/") {
+		вид = ".deb"
+	}
+	return "-linux-" + арх + вид
 }
 
 // применитьОбновление вне Windows приложение само себя не заменяет:
@@ -89,6 +121,16 @@ func кудаЗаОбновлением(доступно *update.Available) (а�
 	case "darwin":
 		if доступно.AssetURL != "" {
 			return доступно.AssetURL, ""
+		}
+	case "linux":
+		if доступно.AssetURL != "" {
+			if strings.HasSuffix(доступно.AssetURL, ".deb") {
+				return доступно.AssetURL, "Скачивается пакет версии " +
+					доступно.Version + ". Когда загрузка закончится, откройте " +
+					"файл — установка поверх нынешней версии."
+			}
+			return доступно.AssetURL, "Скачивается архив версии " +
+				доступно.Version + ". Распакуйте его на место нынешней папки."
 		}
 	}
 	// iOS и всё остальное — страница выпуска.

@@ -14,7 +14,7 @@ from reportlab.platypus import (Image, ListFlowable, ListItem, PageBreak,
                                 Paragraph, SimpleDocTemplate, Spacer, Table,
                                 TableStyle)
 
-ВЕРСИЯ = "0.0.9"
+ВЕРСИЯ = "0.0.10"
 ШРИФТЫ = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 КОРЕНЬ = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ВЫХОД = os.path.join(КОРЕНЬ, "Release", f"TorLocalProxy-{ВЕРСИЯ}-manual.pdf")
@@ -132,6 +132,9 @@ if os.path.exists(СНИМОК):
     [f"TorLocalProxy-{ВЕРСИЯ}-x86_64.apk", "Эмулятор Android на компьютере"],
     [f"TorLocalProxy-{ВЕРСИЯ}-windows-x86_64.zip", "Windows 10 и 11, 64 бита"],
     [f"TorLocalProxy-{ВЕРСИЯ}-macos.dmg", "macOS на Apple Silicon (M1 и новее)"],
+    [f"TorLocalProxy-{ВЕРСИЯ}-linux-x86_64.deb", "Linux на обычном компьютере (Debian, Ubuntu и родственные)"],
+    [f"TorLocalProxy-{ВЕРСИЯ}-linux-arm64.deb", "Linux на arm64 — одноплатники, ARM-ноутбуки"],
+    [f"TorLocalProxy-{ВЕРСИЯ}-linux-*.tar.gz", "Linux без установки: распаковал и запустил"],
     [f"TorLocalProxy-{ВЕРСИЯ}-ios.ipa", "iPhone и iPad (в обход App Store, см. ниже)"],
 ], [72 * mm, 88 * mm]))
 Д(Spacer(1, 4 * mm))
@@ -170,6 +173,25 @@ if os.path.exists(СНИМОК):
     "щелчок macOS отклонит. Откройте приложение через <b>правую кнопку → "
     "«Открыть»</b> и подтвердите — это нужно только один раз. Сборка пока "
     "только под Apple Silicon (M1 и новее).", сноска))
+
+Д(Paragraph("Linux", заголовок3))
+Д(Paragraph(
+    "Два пакета на выбор. <b>.deb</b> — обычная установка: приложение ляжет в "
+    "/opt, появится в меню программ и в командной строке как "
+    "<b>torlocalproxy</b>. Ставится так:", обычный))
+Д(Paragraph(f"sudo apt install ./TorLocalProxy-{ВЕРСИЯ}-linux-x86_64.deb", код))
+Д(Paragraph(
+    "<b>.tar.gz</b> — то же самое без установки: распакуйте в любую папку и "
+    "запустите <b>./TorLocalProxy</b>. Права на запуск уже выставлены, "
+    "chmod не нужен.", обычный))
+Д(Paragraph(
+    "tor лежит в комплекте вместе со своими библиотеками — ставить его "
+    "отдельно не надо. Выносить файл приложения из папки по одному нельзя: "
+    "без tor рядом подключаться будет нечем.", обычный))
+Д(Paragraph(
+    "Сборка идёт на Ubuntu 22.04, поэтому нужен glibc не старше её — это "
+    "Debian 12, Ubuntu 22.04 и всё, что новее. Архитектуры две: x86_64 и "
+    "arm64, выберите свою командой <b>uname -m</b>.", сноска))
 
 Д(Paragraph("iPhone и iPad", заголовок3))
 Д(Paragraph(
@@ -226,6 +248,9 @@ if os.path.exists(СНИМОК):
     ["macOS",
      "Скачивает свежий .dmg; дальше как при первой установке — перетащить в "
      "«Программы»."],
+    ["Linux",
+     "Скачивает тот же вид пакета, из какого приложение поставлено: .deb — "
+     "если оно стоит в /opt, иначе .tar.gz. Дальше как при установке."],
     ["iPhone, iPad",
      "Обновление приходит само в AltStore или SideStore из добавленного "
      "источника — отдельно нажимать в приложении ничего не нужно."],

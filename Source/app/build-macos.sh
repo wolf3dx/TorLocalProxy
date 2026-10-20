@@ -25,8 +25,8 @@
 # Запуск:  ./build-macos.sh
 set -e
 
-APP_VERSION=0.0.9
-APP_BUILD=9
+APP_VERSION=0.0.10
+APP_BUILD=10
 APP_ID=com.vkandreevich.torlocalproxy
 APP_NAME=TorLocalProxy
 
