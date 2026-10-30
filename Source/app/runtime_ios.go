@@ -25,13 +25,3 @@ import (
 func создатьЗапускTor(string) torrun.Runtime {
 	return embedded.New(embedded.Options{Creator: torlib.Creator})
 }
-
-// каталогСостояния на iPhone — личное хранилище приложения. Ничего
-// другого нам и не доступно, а tor туда пишет состояние и журнал.
-func каталогСостояния(приложение fyne.App) string {
-	корень := приложение.Storage().RootURI()
-	if корень == nil {
-		return "tor-state"
-	}
-	return filepath.Join(корень.Path(), "tor")
-}
