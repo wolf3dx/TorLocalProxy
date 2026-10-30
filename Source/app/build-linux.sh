@@ -44,7 +44,7 @@
 # Запуск:  ./build-linux.sh
 set -e
 
-APP_VERSION=0.0.10
+APP_VERSION=0.0.11
 APP_ID=com.vkandreevich.torlocalproxy
 APP_NAME=TorLocalProxy
 

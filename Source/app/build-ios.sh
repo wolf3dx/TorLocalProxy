@@ -23,8 +23,8 @@
 # Запуск:  ./build-ios.sh simulator | ./build-ios.sh device
 set -e
 
-APP_VERSION=0.0.10
-APP_BUILD=10
+APP_VERSION=0.0.11
+APP_BUILD=11
 APP_ID=com.vkandreevich.torlocalproxy
 APP_NAME=TorLocalProxy
 

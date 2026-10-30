@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"fyne.io/fyne/v2"
-
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun"
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun/external"
 )

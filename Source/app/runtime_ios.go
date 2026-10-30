@@ -3,10 +3,6 @@
 package main
 
 import (
-	"path/filepath"
-
-	"fyne.io/fyne/v2"
-
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun"
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun/embedded"
 	"gitlab.com/vkandreevich/torlocalproxy/core/torrun/torlib"
