@@ -41,6 +41,17 @@ const ПапкаДанных = "Data"
 // папкаРядом возвращает каталог данных около приложения или пустую
 // строку, если писать туда нельзя.
 func папкаРядом() string {
+	// macOS в стороне. Приложение там живёт внутри .app-пакета, и
+	// «рядом с исполняемым файлом» означало бы Contents/MacOS — то есть
+	// внутрь пакета. Пакет подписан (пусть и ad-hoc), любой новый файл
+	// внутри подпись ломает, а на Apple Silicon приложение с битой
+	// подписью система просто не запустит. Снаружи же пакет обычно
+	// лежит в «Программах», куда писать и так нельзя. Поэтому на macOS
+	// остаётся обычное место — ~/Library/Preferences.
+	if runtime.GOOS == "darwin" {
+		return ""
+	}
+
 	файл, err := os.Executable()
 	if err != nil {
 		return ""
@@ -81,16 +92,26 @@ func записываем(каталог string) bool {
 // Storage(): одно такое обращение создало бы папку в профиле, от
 // которой мы и уходим.
 func прежнийКаталог() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		дом, err := os.UserHomeDir()
 		if err != nil {
 			return ""
 		}
 		return filepath.Join(дом, "AppData", "Roaming", "fyne", ИдПриложения)
+	case "darwin":
+		// У Apple свои порядки: Fyne кладёт настройки в Library/
+		// Preferences, а не туда, куда указывает UserConfigDir.
+		дом, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(дом, "Library", "Preferences", "fyne", ИдПриложения)
+	default:
+		настройки, err := os.UserConfigDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(настройки, "fyne", ИдПриложения)
 	}
-	настройки, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(настройки, "fyne", ИдПриложения)
 }
