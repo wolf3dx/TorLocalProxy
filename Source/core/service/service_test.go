@@ -149,6 +149,11 @@ func службаСТранспортами(t *testing.T, запуск *подд
 		Dial: func(context.Context, string, control.Options) (control.Client, error) {
 			return клиент, nil
 		},
+		// Через поддельный tor трафик не пойдёт никогда: за адресом
+		// прокси в тестах никто не слушает. Проверку подменяем успехом,
+		// иначе каждый тест подключения упирался бы в неё. Саму проверку
+		// проверяют отдельные тесты в проверка_test.go.
+		Verify: func(context.Context, string) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
