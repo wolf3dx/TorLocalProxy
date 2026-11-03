@@ -168,3 +168,35 @@ func дождаться(условие func() bool) bool {
 	}
 	return false
 }
+
+// Молчащий сторож неотличим от умершего, поэтому раз в несколько
+// удачных проверок он всё равно оставляет отметку в журнале.
+func TestСторожОставляетОтметкуЖивости(t *testing.T) {
+	запуск := &поддельныйЗапуск{конец: torrun.Endpoint{
+		ControlAddress: "127.0.0.1:9051",
+		SocksAddress:   "127.0.0.1:9050",
+	}}
+	клиент := &поддельныйКлиент{шаги: полныйХод()}
+	s := службаСПроверкой(t, запуск, клиент, func(context.Context, string) error { return nil })
+
+	if err := s.Connect(context.Background(), "", nil); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	s.остановитьСторожа()
+
+	ctx, отмена := context.WithCancel(context.Background())
+	defer отмена()
+	go s.сторожить(ctx, "127.0.0.1:9050", time.Millisecond)
+
+	есть := дождаться(func() bool {
+		for _, строка := range s.Log() {
+			if strings.Contains(строка, "Связь в порядке") {
+				return true
+			}
+		}
+		return false
+	})
+	if !есть {
+		t.Error("сторож не оставил ни одной отметки живости")
+	}
+}
