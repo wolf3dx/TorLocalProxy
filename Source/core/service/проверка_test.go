@@ -49,15 +49,15 @@ func TestСтоПроцентовБезТрафикаНеСчитаетсяПо�
 	}}
 	клиент := &поддельныйКлиент{шаги: полныйХод()}
 	s := службаСПроверкой(t, запуск, клиент, func(context.Context, string) error {
-		return ОшибкаНетТрафика
+		return ErrNoTraffic
 	})
 
 	err := s.Connect(context.Background(), "", &записнойНаблюдатель{})
 	if err == nil {
 		t.Fatal("Connect вернул успех, хотя трафик не идёт")
 	}
-	if !errors.Is(err, ОшибкаНетТрафика) {
-		t.Errorf("ошибка = %v, ожидалась ОшибкаНетТрафика", err)
+	if !errors.Is(err, ErrNoTraffic) {
+		t.Errorf("ошибка = %v, ожидалась ErrNoTraffic", err)
 	}
 	if s.State() != StateFailed {
 		t.Errorf("состояние = %q, ожидалось %q", s.State(), StateFailed)
@@ -73,7 +73,7 @@ func TestТипМостаНеЗапоминаетсяБезТрафика(t *tes
 	}}
 	клиент := &поддельныйКлиент{шаги: полныйХод()}
 	s := службаСПроверкой(t, запуск, клиент, func(context.Context, string) error {
-		return ОшибкаНетТрафика
+		return ErrNoTraffic
 	})
 
 	_ = s.Connect(context.Background(), "", nil)
@@ -99,7 +99,7 @@ func TestСторожГаситИЗажигаетОбратно(t *testing.T) {
 	var оборвана atomic.Bool
 	s := службаСПроверкой(t, запуск, клиент, func(context.Context, string) error {
 		if оборвана.Load() {
-			return ОшибкаНетТрафика
+			return ErrNoTraffic
 		}
 		return nil
 	})
