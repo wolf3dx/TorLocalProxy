@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -120,12 +120,12 @@ jobs:
         include:
           - { os: ubuntu-latest,  goos: linux,   goarch: amd64, ext: '' }
           - { os: windows-latest, goos: windows, goarch: amd64, ext: '.exe' }
-          - { os: macos-14,       goos: darwin,  goarch: arm64, ext: '' }
+          - { os: macos-latest,   goos: darwin,  goarch: arm64, ext: '' }
           # Intel-раннеры GitHub на практике не берутся в работу и висят в
           # очереди до отмены, поэтому darwin/amd64 собирается тут же, на
           # arm64-машине. Xcode несёт SDK обеих архитектур, так что это
           # переживёт и появление cgo на этапе 8.
-          - { os: macos-14,       goos: darwin,  goarch: amd64, ext: '' }
+          - { os: macos-latest,   goos: darwin,  goarch: amd64, ext: '' }
     steps:
       - uses: actions/checkout@v7
 
