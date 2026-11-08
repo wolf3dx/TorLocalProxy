@@ -19,7 +19,7 @@
 # Запуск:  ./build-windows.sh
 set -e
 
-APP_VERSION=0.0.11
+APP_VERSION=0.0.12
 APP_BUILD=11
 
 cd "$(dirname "$0")"
