@@ -144,6 +144,13 @@ build_universal() {
     pair="$second/$rel"
     if [ ! -f "$pair" ]; then
       echo "во втором пакете нет $rel — склеить нечем" >&2
+      echo "Чаще всего это значит, что половины собраны на разных версиях" >&2
+      echo "macOS: Homebrew даёт на них разные библиотеки. Вот что есть" >&2
+      echo "у каждой половины:" >&2
+      echo "--- первая ($first) ---" >&2
+      ls "$first/Contents/libs" >&2 || true
+      echo "--- вторая ($second) ---" >&2
+      ls "$second/Contents/libs" >&2 || true
       exit 1
     fi
     # lipo ругается на то, что не Mach-O (скажем, на текстовый файл).

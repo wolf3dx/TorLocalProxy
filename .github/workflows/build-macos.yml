@@ -44,8 +44,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest,   arch: arm64 }
-          - { os: macos-15-intel, arch: x86_64 }
+          # Версия macOS у обеих машин обязана совпадать. Homebrew даёт
+          # разные наборы библиотек на разных системах: на macOS 26 tor
+          # собран с openssl@4 (libcrypto.4.dylib), на macOS 15 — с
+          # openssl@3. Такие половины не склеить, имена файлов разные.
+          - { os: macos-26,       arch: arm64 }
+          - { os: macos-26-intel, arch: x86_64 }
 
     steps:
       - name: Забрать исходники
@@ -101,7 +105,9 @@ jobs:
   universal:
     name: macOS — универсальный .dmg
     needs: halves
-    runs-on: macos-latest
+    # Та же версия системы, что и у половин: здесь переподписываем пакет,
+    # и расходиться с ними незачем.
+    runs-on: macos-26
     timeout-minutes: 30
     # Запись нужна для выкладки .dmg в раздел выпусков: артефакт сборки
     # качается лишь по ключу, а файл выпуска — обычной ссылкой, откуда
