@@ -69,9 +69,16 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           chmod +x build-macos.sh
           ./build-macos.sh app
+          # Что получилось — показываем, перебирая содержимое, а не
+          # угадывая имена: исполняемый файл внутри .app называет Fyne,
+          # и это не обязательно имя приложения.
           echo "--- что собралось ---"
-          lipo -archs TorLocalProxy.app/Contents/MacOS/TorLocalProxy
-          lipo -archs TorLocalProxy.app/Contents/MacOS/tor
+          for f in TorLocalProxy.app/Contents/MacOS/* TorLocalProxy.app/Contents/libs/*; do
+            [ -f "$f" ] || continue
+            if lipo -info "$f" >/dev/null 2>&1; then
+              echo "  $(lipo -archs "$f")  ${f#TorLocalProxy.app/}"
+            fi
+          done
 
       # Пакет складываем в tar, а не отдаём папкой: upload-artifact
       # теряет права на запуск и символьные ссылки, а .app без права на
@@ -118,7 +125,7 @@ jobs:
           for arch in arm64 x86_64; do
             mkdir -p "half-$arch"
             tar -xzf "$GITHUB_WORKSPACE/halves/half-$arch/half-$arch.tgz" -C "half-$arch"
-            echo "$arch: $(lipo -archs half-$arch/TorLocalProxy.app/Contents/MacOS/tor)"
+            echo "$arch: tor собран под $(lipo -archs "half-$arch/TorLocalProxy.app/Contents/MacOS/tor")"
           done
 
       - name: Склеить в универсальный пакет
