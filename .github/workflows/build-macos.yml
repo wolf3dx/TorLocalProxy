@@ -1,14 +1,22 @@
-# Сборка приложения под macOS.
+# Сборка приложения под macOS — универсальная, под оба вида Маков.
 #
 # Как и iOS, собирается только на macOS — своего Mac у нас нет, поэтому
-# единственная площадка это macos-latest раннер GitHub. Основной
-# репозиторий на GitLab, сюда код попадает только ради сборки под Apple.
+# единственная площадка это раннеры GitHub. Основной репозиторий на
+# GitLab, сюда код попадает только ради сборки под Apple.
 #
-# На выходе .dmg с приложением; tor вложен внутрь .app вместе со своими
-# зависимостями (см. build-macos.sh). Пакет неподписанный по-настоящему
-# (только ad-hoc): Developer ID и нотаризация требуют платной учётной
-# записи Apple. Поэтому при первом запуске — «Открыть» из меню правой
-# кнопки, это снимает карантин Gatekeeper.
+# Почему работ три, а не одна. Пакет должен запускаться и на Маках с
+# процессором Apple (arm64), и на прежних, с Intel (x86_64). В macOS для
+# этого есть «толстый» формат: обе версии кода лежат в одном файле, а
+# система при запуске берёт подходящую. Но собрать обе половины на одной
+# машине нельзя: внутрь пакета кладётся готовый tor от Homebrew и
+# десяток его библиотек, а Homebrew ставит их под ту систему, на которой
+# работает. Поэтому половины собираются на двух машинах, а третья работа
+# их склеивает (lipo), подписывает заново и выкладывает.
+#
+# На выходе один .dmg. Пакет неподписанный по-настоящему (только
+# ad-hoc): Developer ID и нотаризация требуют платной учётной записи
+# Apple. Поэтому при первом запуске — «Открыть» из меню правой кнопки,
+# это снимает карантин Gatekeeper.
 #
 # Имена переменных оболочки только латиницей: bash не принимает русские.
 
@@ -23,15 +31,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: macOS — приложение и .dmg
-    runs-on: macos-latest
+  # =====================================================================
+  # Половины. Каждая машина собирает пакет под себя и отдаёт его дальше.
+  # =====================================================================
+  halves:
+    name: Половина (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    # Запись нужна для выкладки .dmg в раздел выпусков: артефакт сборки
-    # качается лишь по ключу, а файл выпуска — обычной ссылкой, откуда
-    # его и берёт встроенное обновление.
-    permissions:
-      contents: write
+    strategy:
+      # Падение одной половины не должно гасить вторую: по журналу
+      # второй часто видно, общая это беда или только у одной машины.
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   arch: arm64 }
+          - { os: macos-15-intel, arch: x86_64 }
 
     steps:
       - name: Забрать исходники
@@ -49,12 +63,73 @@ jobs:
       - name: Поставить tor и dylibbundler
         run: brew install tor dylibbundler
 
-      - name: Собрать .dmg
+      - name: Собрать половину пакета
         working-directory: Source/app
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           chmod +x build-macos.sh
-          ./build-macos.sh
+          ./build-macos.sh app
+          echo "--- что собралось ---"
+          lipo -archs TorLocalProxy.app/Contents/MacOS/TorLocalProxy
+          lipo -archs TorLocalProxy.app/Contents/MacOS/tor
+
+      # Пакет складываем в tar, а не отдаём папкой: upload-artifact
+      # теряет права на запуск и символьные ссылки, а .app без права на
+      # запуск — просто папка с файлами.
+      - name: Упаковать половину в tar
+        working-directory: Source/app
+        run: tar -czf half-${{ matrix.arch }}.tgz TorLocalProxy.app
+
+      - name: Отдать половину дальше
+        uses: actions/upload-artifact@v4
+        with:
+          name: half-${{ matrix.arch }}
+          path: Source/app/half-${{ matrix.arch }}.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  # =====================================================================
+  # Склейка, подпись, .dmg и выпуск.
+  # =====================================================================
+  universal:
+    name: macOS — универсальный .dmg
+    needs: halves
+    runs-on: macos-latest
+    timeout-minutes: 30
+    # Запись нужна для выкладки .dmg в раздел выпусков: артефакт сборки
+    # качается лишь по ключу, а файл выпуска — обычной ссылкой, откуда
+    # его и берёт встроенное обновление.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Забрать исходники
+        uses: actions/checkout@v4
+
+      - name: Забрать обе половины
+        uses: actions/download-artifact@v4
+        with:
+          pattern: half-*
+          path: halves
+
+      - name: Распаковать половины
+        working-directory: Source/app
+        run: |
+          for arch in arm64 x86_64; do
+            mkdir -p "half-$arch"
+            tar -xzf "$GITHUB_WORKSPACE/halves/half-$arch/half-$arch.tgz" -C "half-$arch"
+            echo "$arch: $(lipo -archs half-$arch/TorLocalProxy.app/Contents/MacOS/tor)"
+          done
+
+      - name: Склеить в универсальный пакет
+        working-directory: Source/app
+        run: |
+          chmod +x build-macos.sh
+          ./build-macos.sh universal half-arm64/TorLocalProxy.app half-x86_64/TorLocalProxy.app
+
+      - name: Подписать и собрать .dmg
+        working-directory: Source/app
+        run: ./build-macos.sh pack
 
       - name: Забрать сборку
         if: always()
@@ -81,11 +156,13 @@ jobs:
           version=$(basename "$pkg" | sed 's/^TorLocalProxy-//; s/-macos\.dmg$//')
           tag="macos-v$version"
           gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
-          note="Приложение для macOS. tor внутри пакета, ставить ничего не"
-          note="$note нужно. Пакет без подписи Apple: при первом запуске"
-          note="$note откройте его через меню правой кнопки → «Открыть»."
-          note="$note Основной репозиторий — GitLab vkandreevich/TorLocalProxy."
+          note="Приложение для macOS, универсальное: один пакет и для Маков"
+          note="$note на процессоре Apple, и для прежних на Intel. tor внутри"
+          note="$note пакета, ставить ничего не нужно. Без подписи Apple: при"
+          note="$note первом запуске откройте его через меню правой кнопки →"
+          note="$note «Открыть». Основной репозиторий — GitLab"
+          note="$note vkandreevich/TorLocalProxy."
           gh release create "$tag" "$pkg" "$sum" \
-            --title "TorLocalProxy $version для macOS" \
+            --title "TorLocalProxy $version для macOS (универсальный)" \
             --notes "$note"
           gh release view "$tag" --json assets --jq '.assets[].url'
