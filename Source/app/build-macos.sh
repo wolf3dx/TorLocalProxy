@@ -134,56 +134,74 @@ build_universal() {
   rm -rf "$APP_NAME.app"
   cp -R "$first" "$APP_NAME.app"
 
-  # Склеиваем всё, что лежит в MacOS и libs. Имена в обоих пакетах
-  # обязаны совпадать — они берутся из одних и тех же формул Homebrew.
-  # Не совпали — значит на машинах оказались разные версии библиотек, и
-  # молча отдавать половинчатый пакет нельзя.
-  for file in "$APP_NAME.app/Contents/MacOS"/* "$APP_NAME.app/Contents/libs"/*; do
+  # --- Исполняемые файлы. ---------------------------------------------
+  # Их имена в обеих половинах одинаковы (приложение и tor), и каждый
+  # обязан стать универсальным: именно их запускает система.
+  for file in "$APP_NAME.app/Contents/MacOS"/*; do
     [ -f "$file" ] || continue
     rel=${file#"$APP_NAME.app/"}
     pair="$second/$rel"
     if [ ! -f "$pair" ]; then
-      echo "во втором пакете нет $rel — склеить нечем" >&2
-      echo "Чаще всего это значит, что половины собраны на разных версиях" >&2
-      echo "macOS: Homebrew даёт на них разные библиотеки. Вот что есть" >&2
-      echo "у каждой половины:" >&2
-      echo "--- первая ($first) ---" >&2
-      ls "$first/Contents/libs" >&2 || true
-      echo "--- вторая ($second) ---" >&2
-      ls "$second/Contents/libs" >&2 || true
+      echo "во второй половине нет $rel — склеить нечем" >&2
       exit 1
     fi
-    # lipo ругается на то, что не Mach-O (скажем, на текстовый файл).
-    # Такое пропускаем, но говорим вслух.
-    if ! lipo -info "$file" >/dev/null 2>&1; then
-      echo "  пропускаю (не бинарник): $rel"
-      continue
-    fi
+    lipo -info "$file" >/dev/null 2>&1 || continue
     lipo -create "$file" "$pair" -output "$file.universal"
     mv "$file.universal" "$file"
     chmod +x "$file"
     echo "  склеен: $rel -> $(lipo -archs "$file")"
   done
 
-  # Проверка: в пакете не должно остаться ни одного файла с одной
-  # архитектурой. Это и есть главный признак универсальности, и поймать
-  # его лучше здесь, чем получить жалобу от владельца Intel-мака.
-  echo "Проверяю, что все бинарники универсальны..."
-  lonely=0
-  for file in "$APP_NAME.app/Contents/MacOS"/* "$APP_NAME.app/Contents/libs"/*; do
+  # --- Библиотеки. ----------------------------------------------------
+  # Здесь хитрее. Homebrew собирает tor для Intel и для Apple с разными
+  # версиями openssl: одной нужен libcrypto.3.dylib, другой —
+  # libcrypto.4.dylib. Склеить их нельзя, да и не нужно: имена разные,
+  # поэтому обе лягут рядом, и каждая половина tor при запуске попросит
+  # свою. Библиотеки с совпадающими именами (libevent, libscrypt)
+  # склеиваем как обычно — их просит и та половина, и другая.
+  for file in "$second/Contents/libs"/*; do
     [ -f "$file" ] || continue
-    lipo -info "$file" >/dev/null 2>&1 || continue
-    archs=$(lipo -archs "$file")
-    case "$archs" in
-      *arm64*x86_64*|*x86_64*arm64*) : ;;
-      *) echo "  ТОЛЬКО $archs: ${file#"$APP_NAME.app/"}" >&2; lonely=$((lonely+1)) ;;
-    esac
+    name=$(basename "$file")
+    mine="$APP_NAME.app/Contents/libs/$name"
+    if [ -f "$mine" ]; then
+      lipo -create "$mine" "$file" -output "$mine.universal"
+      mv "$mine.universal" "$mine"
+      echo "  склеена: libs/$name -> $(lipo -archs "$mine")"
+    else
+      cp "$file" "$mine"
+      echo "  добавлена: libs/$name ($(lipo -archs "$mine")) — своя для второй половины"
+    fi
   done
-  if [ "$lonely" != "0" ]; then
-    echo "Универсального пакета не вышло: файлов с одной архитектурой — $lonely." >&2
-    exit 1
-  fi
-  echo "Все бинарники несут обе архитектуры."
+
+  # --- Проверка. ------------------------------------------------------
+  # Мало убедиться, что файлы на месте: надо знать, что КАЖДАЯ половина
+  # найдёт всё, что просит. Для этого спрашиваем у самого tor отдельно
+  # по каждой архитектуре, какие библиотеки ему нужны, и проверяем, что
+  # такой файл есть и что в нём есть эта архитектура.
+  echo "Проверяю, что обе половины укомплектованы..."
+  for arch in arm64 x86_64; do
+    for file in "$APP_NAME.app/Contents/MacOS"/*; do
+      [ -f "$file" ] || continue
+      lipo -info "$file" >/dev/null 2>&1 || continue
+      case "$(lipo -archs "$file")" in
+        *"$arch"*) : ;;
+        *) echo "  $arch: в ${file#"$APP_NAME.app/"} нет этой архитектуры" >&2; exit 1 ;;
+      esac
+      otool -arch "$arch" -L "$file" 2>/dev/null         | awk '/@executable_path\/\.\.\/libs\//{print $1}'         | sed 's|@executable_path/\.\./libs/||'         | while read -r need; do
+            [ -n "$need" ] || continue
+            lib="$APP_NAME.app/Contents/libs/$need"
+            if [ ! -f "$lib" ]; then
+              echo "  $arch: ${file#"$APP_NAME.app/"} просит $need, а его нет" >&2
+              exit 1
+            fi
+            case "$(lipo -archs "$lib")" in
+              *"$arch"*) : ;;
+              *) echo "  $arch: $need есть, но без этой архитектуры" >&2; exit 1 ;;
+            esac
+          done || exit 1
+    done
+    echo "  $arch: всё на месте"
+  done
 }
 
 # =====================================================================
